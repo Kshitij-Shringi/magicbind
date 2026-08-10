@@ -8,6 +8,11 @@ let package = Package(
         .target(
             name: "MagicBindCore",
             path: "Sources/MagicBindCore"
+        ),
+        .executableTarget(
+            name: "MagicBind",
+            dependencies: ["MagicBindCore"],
+            path: "Sources/MagicBind"
         )
     ]
 )
