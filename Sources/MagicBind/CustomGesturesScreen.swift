@@ -261,6 +261,24 @@ struct TuningSettingsScreen: View {
                         Button("Reset to Defaults") { state.resetToDefaults() }
                     }
                 }
+
+                section("About") {
+                    // Quote this verbatim in a bug report — docs/TESTING.md asks
+                    // testers for it, and it pins the exact commit.
+                    HStack(spacing: 8) {
+                        Text("Version")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.primaryText)
+                        Text(state.versionSummary)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Theme.secondaryText)
+                            .textSelection(.enabled)
+                    }
+
+                    Text("Include this in bug reports — see docs/TESTING.md.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.secondaryText)
+                }
             }
             .padding(28)
             .frame(maxWidth: 560, alignment: .leading)

@@ -97,9 +97,11 @@ open build/MagicBind.app
 ```
 
 `build_app.sh` compiles a release build, wraps it into a proper
-`MagicBind.app` bundle, and ad-hoc signs it. The bundle matters: macOS grants
-Accessibility permission per bundle identifier, and the menu-bar-only behavior
-comes from the bundle's `Info.plist`.
+`MagicBind.app` bundle, stamps the version and commit, and ad-hoc signs it. The
+bundle matters: macOS grants Accessibility permission per bundle identifier, and
+the menu-bar-only behavior comes from the bundle's `Info.plist`.
+
+Add `--universal` for a build that also runs on Intel Macs.
 
 MagicBind runs as a menu bar item with no Dock icon. Choose **Open MagicBind…**
 from the menu bar to edit bindings.
@@ -119,6 +121,20 @@ permission won't stick reliably, so gestures won't fire. Use the `.app`.
 </details>
 
 Homebrew cask and notarized releases are [Phase 7][plan].
+
+### Sharing a build with testers
+
+There is no Apple Developer Program membership behind this yet, so builds are
+ad-hoc signed and **Gatekeeper rejects them once downloaded**. Building from
+source is therefore the recommended path for testers too.
+
+```sh
+./Scripts/package_release.sh   # universal build + zip + SHA-256, ready to attach to a release
+```
+
+**[docs/TESTING.md](docs/TESTING.md)** is written to hand straight to a tester:
+both install paths, the exact `xattr` override a downloaded zip needs, what's
+most worth testing, and what to include in a report. Send them that link.
 
 ## Permissions, and why each is needed
 

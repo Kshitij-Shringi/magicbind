@@ -12,6 +12,39 @@ to the configuration format. Any such change ships with a migration path in
 
 ## [Unreleased]
 
+### Added — sharing test builds
+
+- **Universal builds.** `./Scripts/build_app.sh --universal` produces an
+  arm64 + x86_64 binary. Builds were previously arm64-only, so they would not
+  launch at all on an Intel Mac. `swift build --arch` needs full Xcode's
+  xcbuild, so each slice is built with `--triple` and combined with `lipo`,
+  which works with Command Line Tools alone.
+- **`Scripts/package_release.sh`** — universal build, zip via `ditto` so the
+  code signature survives, plus a SHA-256 checksum, and it prints the
+  `gh release create --prerelease` command to publish it. Warns before packaging
+  a dirty working tree, since testers would report against a build that can't be
+  reconstructed from a commit.
+- **Version stamping.** A root `VERSION` file is the single source of truth;
+  the build script writes it into `CFBundleShortVersionString`, uses the commit
+  count as `CFBundleVersion`, and records the short git SHA (with a `-dirty`
+  suffix when applicable) in a `MagicBindGitSHA` key. The Settings screen shows
+  all three, selectable, so a bug report can pin the exact build.
+- **[docs/TESTING.md](docs/TESTING.md)** — a guide to hand to testers: both
+  install paths, the `xattr -dr com.apple.quarantine` step a downloaded zip
+  needs, what's most worth testing (starting with whether the reverse-engineered
+  touch data works on their machine at all), and what to include in a report.
+
+### Fixed — bundle identity
+
+- **The bundle identifier was `com.example.magicbind`**, a placeholder. It is now
+  `io.github.kshitij-shringi.magicbind`. macOS keys Accessibility permission off
+  the bundle identifier, so a placeholder is both wrong and a real collision
+  risk. **Existing users must re-grant Accessibility** after this change: remove
+  MagicBind from System Settings → Privacy & Security → Accessibility and re-add
+  it.
+- `CFBundleVersion` and `CFBundleShortVersionString` claimed `1.0` on a pre-1.0
+  project. They are now stamped at build time.
+
 ### Added — Options+-style interface
 
 - **Rebuilt the window** in the style of Logi Options+: a dark canvas with a

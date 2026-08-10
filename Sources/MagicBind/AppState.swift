@@ -239,6 +239,24 @@ final class AppState: ObservableObject {
         store.fileURL.path
     }
 
+    /// Version, build number, and commit, for bug reports.
+    ///
+    /// `Scripts/build_app.sh` stamps all three into the bundle. Running the bare
+    /// executable via `swift run` has no bundle plist, hence the fallback.
+    var versionSummary: String {
+        let info = Bundle.main.infoDictionary
+        guard
+            let version = info?["CFBundleShortVersionString"] as? String,
+            version != "0.0.0"
+        else {
+            return "unpackaged build (run Scripts/build_app.sh for a versioned one)"
+        }
+
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        let sha = info?["MagicBindGitSHA"] as? String ?? "unknown"
+        return "\(version) (build \(build), \(sha))"
+    }
+
     func revealConfigInFinder() {
         // Save first: revealing a file that doesn't exist yet just opens the
         // enclosing folder and looks broken.
