@@ -205,11 +205,15 @@ final class GestureRecognizerTests: XCTestCase {
     }
 
     func testConsecutiveTapsEachEmit() {
+        // The second tap has to land outside the double-tap window, or it gets
+        // promoted to `.doubleTap` — which is the subject of
+        // ClickAndDoubleTapTests, not this test.
+        let gap = tuning.effectiveDoubleTapMaxInterval + 0.2
         let emitted = feed([
             (frame(fingerCount: 3, x: 0.5, y: 0.5, timestamp: 0.00), 0.00),
             ([], 0.05),
-            (frame(fingerCount: 3, x: 0.5, y: 0.5, timestamp: 0.30), 0.30),
-            ([], 0.35)
+            (frame(fingerCount: 3, x: 0.5, y: 0.5, timestamp: gap), gap),
+            ([], gap + 0.05)
         ])
 
         XCTAssertEqual(

@@ -12,7 +12,68 @@ to the configuration format. Any such change ships with a migration path in
 
 ## [Unreleased]
 
-### Added
+### Added — Options+-style interface
+
+- **Rebuilt the window** in the style of Logi Options+: a dark canvas with a
+  device illustration in the middle, each binding shown as a chip arranged
+  around it, and a searchable Actions panel down the right-hand side. Selecting
+  a chip and picking an action is the whole interaction — no separate list and
+  detail pane.
+- **Actions panel** with a search field and collapsible Recommended / System /
+  Other groups, radio-button rows, and an inline editor that appears beneath
+  whichever row needs more input (the shortcut recorder, a bundle identifier, a
+  command). Search matches titles *and* the shortcut glyphs in subtitles, so
+  typing `⌘V` finds Paste, and matched groups expand even when collapsed by
+  default.
+- **A "Custom gestures" screen** laying swipes out by direction around the
+  device, one finger count at a time, with unassigned directions creating the
+  binding when clicked.
+- **20 named system actions** — Mission Control, Application Windows,
+  Show/Hide Desktop, Desktop Left/Right, Maximize Window, Switch Application,
+  Lock Screen, Screen Capture, Capture Region, Copy, Paste, Cut, Undo, Redo,
+  Back, Forward, Volume Up/Down, Mute — so binding Mission Control no longer
+  means knowing it's ⌃↑. Volume and mute post media keys rather than key codes.
+- **The device illustration is a vector drawing**, not Apple's product
+  photography, which isn't ours to redistribute. It shows finger dots matching
+  the selected gesture's finger count.
+- **A "Settings" screen** holding the recognizer thresholds, the mouse-button
+  opt-in, and a Reveal in Finder button for the config file.
+- **ACTIVE / INACTIVE badge** in the footer, clickable to toggle the engine.
+
+### Added — new gesture kinds
+
+- **Double tap**, with a tunable window (default 0.35s). Two taps of the same
+  finger count within the window emit `.doubleTap`.
+- **Click**, recognized per physical button (left, right, middle) and combined
+  with however many fingers are resting on the surface — so "2-finger right
+  click" is a binding. A bare click with no fingers is also valid, and displays
+  without a finger prefix.
+- `MouseButtonMonitor`, a **listen-only** `CGEvent` tap that makes click
+  recognition possible. Touch frames carry no button state, so there is no other
+  way. It is **off by default**, opt-in via `mouseClicksEnabled`, reads only the
+  button number, and passes every event through unmodified.
+
+### Changed
+
+- **`SECURITY.md` no longer claims MagicBind never observes input.** That was
+  true before click support and would have been false after it. The new
+  disclosure describes exactly what the tap sees, what it cannot do, and what
+  you're trusting — and the "nothing leaves your device" guarantee is unchanged.
+- A click now suppresses the tap that would otherwise fire when the fingers
+  lift, and clears any pending double tap. Clicking is not tapping.
+
+### Fixed
+
+- **Recording a keyboard shortcut failed for key equivalents.** The recorder
+  used `NSEvent.addLocalMonitorForEvents`, which never sees combinations the
+  main menu claims — ⌘W, ⌘Q, ⌘, and others were silently dropped. It is now a
+  first-responder `NSView` overriding `performKeyEquivalent(with:)`, which sees
+  them first. This is the approach every working macOS shortcut recorder uses.
+- Selecting a catalog row that needs input no longer discards parameters already
+  entered, so re-selecting "Keyboard Shortcut" doesn't wipe the shortcut you
+  just recorded.
+
+### Added — earlier in this cycle
 
 - Live keyboard shortcut capture in the binding editor. Click the shortcut
   field, press the combination you want, and it records the key code and

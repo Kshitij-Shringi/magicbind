@@ -272,6 +272,9 @@ ActionExecutor     fires the action via CGEvent / NSWorkspace / AppleScript
 | [Models.swift](Sources/MagicBindCore/Models.swift) | `GestureSpec`, `GestureBinding`, `ActionConfig`, `AppConfig`. |
 | [ConfigStore.swift](Sources/MagicBindCore/ConfigStore.swift) | JSON persistence and migration. |
 | [KeyboardShortcut.swift](Sources/MagicBindCore/KeyboardShortcut.swift) | `ShortcutModifiers` + layout-aware shortcut formatting. Raw values must stay in sync with `CGEventFlags`. |
+| [PresetAction.swift](Sources/MagicBindCore/PresetAction.swift) | The 20 named system actions and the shortcut or media key each sends. |
+| [ActionCatalog.swift](Sources/MagicBindCore/ActionCatalog.swift) | What the Actions panel lists, and its search. Kept in Core so it's testable. |
+| [MouseButtonMonitor.swift](Sources/MagicBindCore/MouseButtonMonitor.swift) | Listen-only `CGEvent` tap for physical buttons. **Read SECURITY.md before touching this.** |
 | [ActionExecutor.swift](Sources/MagicBindCore/ActionExecutor.swift) | The only file that posts `CGEvent`s. |
 | [GestureEngine.swift](Sources/MagicBindCore/GestureEngine.swift) | Wires the pipeline together. |
 | [Sources/MagicBind/](Sources/MagicBind/) | Menu bar app and SwiftUI preferences. |
@@ -283,6 +286,9 @@ Two rules worth internalizing:
 - **`GestureRecognizer` must stay free of wall-clock time and of the private
   framework.** It takes timestamps as parameters. That constraint is what makes
   it testable — don't reach for `Date()` inside it.
+- **The mouse button tap stays `.listenOnly`.** Changing it to an active tap
+  would let MagicBind modify or swallow clicks, which contradicts what
+  SECURITY.md promises users. If you think you need that, open an issue first.
 
 Where the project is headed, phase by phase, is in
 [ProjectPlan.md](ProjectPlan.md). Reading Phase 2 and 3 will save you from
@@ -290,7 +296,10 @@ proposing recognizer tuning that's already planned.
 
 ## Good first contributions
 
-- **SF Symbol icons per `ActionType`** in the bindings list.
+- **Per-app profiles** ([Phase 6](ProjectPlan.md)) — the largest missing feature.
+- **Suppress the leading tap of a double tap** without making single taps feel
+  laggy. Currently a double tap fires `Tap` then `Double Tap`; solving that
+  properly needs a deferred-emission design in `GestureRecognizer`.
 - **Import/export config** from the preferences window via
   `NSOpenPanel`/`NSSavePanel`.
 - **Recognizer edge-case tests** — diagonal swipes, a finger lifting mid-swipe,

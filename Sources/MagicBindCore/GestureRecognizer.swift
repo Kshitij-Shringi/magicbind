@@ -29,6 +29,10 @@ public final class GestureRecognizer {
 
     private var session: Session?
 
+    /// When and with how many fingers the last tap landed, so the next tap can
+    /// be promoted to a double tap.
+    private var lastTap: (timestamp: Double, fingerCount: Int)?
+
     public init(tuning: RecognizerTuning = .default) {
         self.tuning = tuning
     }
@@ -38,6 +42,35 @@ public final class GestureRecognizer {
     /// gesture on the next frame.
     public func reset() {
         session = nil
+        lastTap = nil
+    }
+
+    /// Classifies a physical button press as a click gesture, using however
+    /// many fingers are currently on the surface.
+    ///
+    /// Called by `GestureEngine` from `MouseButtonMonitor`, separately from the
+    /// touch frame stream, because button events and touch frames arrive on
+    /// different callbacks. Only presses produce gestures; releases are ignored.
+    ///
+    /// - Returns: the click gesture, or `nil` for a button release.
+    public func processButton(
+        _ button: MouseButton,
+        isDown: Bool,
+        timestamp: Double
+    ) -> GestureSpec? {
+        guard isDown else { return nil }
+
+        // A click with fingers resting on the surface is a different gesture
+        // from a bare click, so the current contact count is part of the spec.
+        let fingers = session?.contactCount ?? 0
+
+        // A click ends any tap/hold in progress — the user clicked rather than
+        // tapped — and clears the double-tap history so a click between two taps
+        // doesn't join them.
+        session?.hasEmitted = true
+        lastTap = nil
+
+        return GestureSpec(fingerCount: fingers, kind: .click, button: button)
     }
 
     /// Feeds one multitouch frame in and returns a gesture if this frame
@@ -131,10 +164,32 @@ public final class GestureRecognizer {
         let duration = finished.lastContactTimestamp - finished.startTimestamp
 
         guard duration <= tuning.tapMaxDuration, travel <= tuning.tapMaxMovement else {
+            // An abandoned gesture shouldn't leave a half-finished double tap
+            // armed for whatever the user does next.
+            lastTap = nil
             return nil
         }
 
-        return GestureSpec(fingerCount: finished.peakContactCount, kind: .tap)
+        let fingerCount = finished.peakContactCount
+        let liftTimestamp = finished.lastContactTimestamp
+
+        // A second tap of the same finger count, soon enough after the first,
+        // is a double tap.
+        //
+        // Note this emits `.tap` for the first tap and `.doubleTap` for the
+        // second — it does not retroactively suppress the first. Suppressing it
+        // would mean delaying every tap by the double-tap window, which makes
+        // single taps feel laggy. Bind one or the other, not both, unless you
+        // want both to fire.
+        if let previous = lastTap,
+           previous.fingerCount == fingerCount,
+           liftTimestamp - previous.timestamp <= tuning.effectiveDoubleTapMaxInterval {
+            lastTap = nil
+            return GestureSpec(fingerCount: fingerCount, kind: .doubleTap)
+        }
+
+        lastTap = (timestamp: liftTimestamp, fingerCount: fingerCount)
+        return GestureSpec(fingerCount: fingerCount, kind: .tap)
     }
 
     /// The centroid of every finger in contact.

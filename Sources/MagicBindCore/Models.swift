@@ -4,21 +4,68 @@ import Foundation
 /// fingers produced it.
 public enum GestureKind: String, Codable, CaseIterable, Sendable {
     case tap
+    case doubleTap
+    case click
+    case hold
     case swipeUp
     case swipeDown
     case swipeLeft
     case swipeRight
-    case hold
 
     /// A short human-readable label for the preferences UI.
     public var displayName: String {
         switch self {
         case .tap: return "Tap"
+        case .doubleTap: return "Double Tap"
+        case .click: return "Click"
+        case .hold: return "Hold"
         case .swipeUp: return "Swipe Up"
         case .swipeDown: return "Swipe Down"
         case .swipeLeft: return "Swipe Left"
         case .swipeRight: return "Swipe Right"
-        case .hold: return "Hold"
+        }
+    }
+
+    /// Whether recognizing this gesture needs physical mouse button events,
+    /// which only arrive when `AppConfig.mouseClicksEnabled` is on.
+    public var requiresMouseButtons: Bool {
+        self == .click
+    }
+
+    /// Whether this gesture is a directional swipe.
+    public var isSwipe: Bool {
+        switch self {
+        case .swipeUp, .swipeDown, .swipeLeft, .swipeRight: return true
+        default: return false
+        }
+    }
+
+    /// An SF Symbol suggesting the motion, for the bindings UI.
+    public var symbolName: String {
+        switch self {
+        case .tap: return "hand.tap"
+        case .doubleTap: return "hand.tap.fill"
+        case .click: return "cursorarrow.click"
+        case .hold: return "hand.raised"
+        case .swipeUp: return "arrow.up"
+        case .swipeDown: return "arrow.down"
+        case .swipeLeft: return "arrow.left"
+        case .swipeRight: return "arrow.right"
+        }
+    }
+}
+
+/// A physical mouse button, as reported by the event tap.
+public enum MouseButton: Int, Codable, CaseIterable, Sendable {
+    case left = 0
+    case right = 1
+    case middle = 2
+
+    public var displayName: String {
+        switch self {
+        case .left: return "Left Button"
+        case .right: return "Right Button"
+        case .middle: return "Middle Button"
         }
     }
 }
@@ -32,14 +79,26 @@ public struct GestureSpec: Codable, Hashable, Sendable {
     public var fingerCount: Int
     public var kind: GestureKind
 
-    public init(fingerCount: Int, kind: GestureKind) {
+    /// Which physical button, for `.click` gestures. `nil` for everything else.
+    ///
+    /// Optional so configs written before click support existed still decode.
+    public var button: MouseButton?
+
+    public init(fingerCount: Int, kind: GestureKind, button: MouseButton? = nil) {
         self.fingerCount = fingerCount
         self.kind = kind
+        // Normalizing here keeps lookup honest: a tap that carried a stray
+        // button value would never match the tap the recognizer emits.
+        self.button = kind == .click ? (button ?? .left) : nil
     }
 
-    /// e.g. "3-finger Tap"
+    /// e.g. "3-finger Tap", "2-finger Left Button Click", "Right Button Click"
     public var displayName: String {
-        "\(fingerCount)-finger \(kind.displayName)"
+        let fingers = fingerCount == 0 ? "" : "\(fingerCount)-finger "
+        guard kind == .click, let button else {
+            return fingers + kind.displayName
+        }
+        return "\(fingers)\(button.displayName) Click"
     }
 }
 
@@ -47,6 +106,9 @@ public struct GestureSpec: Codable, Hashable, Sendable {
 public enum ActionType: String, Codable, CaseIterable, Sendable {
     case middleClick
     case keyboardShortcut
+    /// One of the named system actions in `PresetAction` — Mission Control,
+    /// Screen Capture, Volume Up and so on.
+    case preset
     case launchApp
     case shellCommand
     case appleScript
@@ -55,9 +117,21 @@ public enum ActionType: String, Codable, CaseIterable, Sendable {
         switch self {
         case .middleClick: return "Middle Click"
         case .keyboardShortcut: return "Keyboard Shortcut"
+        case .preset: return "System Action"
         case .launchApp: return "Launch App"
         case .shellCommand: return "Shell Command"
         case .appleScript: return "AppleScript"
+        }
+    }
+
+    public var symbolName: String {
+        switch self {
+        case .middleClick: return "cursorarrow.click.2"
+        case .keyboardShortcut: return "keyboard"
+        case .preset: return "sparkles"
+        case .launchApp: return "app.badge"
+        case .shellCommand: return "terminal"
+        case .appleScript: return "scroll"
         }
     }
 }
@@ -70,6 +144,9 @@ public enum ActionType: String, Codable, CaseIterable, Sendable {
 /// far kinder to someone editing `config.json` in a text editor.
 public struct ActionConfig: Codable, Hashable, Sendable {
     public var type: ActionType
+
+    /// Which named system action, for `.preset`.
+    public var preset: PresetAction?
 
     /// Virtual key code for `.keyboardShortcut` (e.g. 21 is "4" on US ANSI).
     public var keyCode: UInt16?
@@ -90,6 +167,7 @@ public struct ActionConfig: Codable, Hashable, Sendable {
 
     public init(
         type: ActionType,
+        preset: PresetAction? = nil,
         keyCode: UInt16? = nil,
         modifiers: UInt64? = nil,
         bundleIdentifier: String? = nil,
@@ -97,6 +175,7 @@ public struct ActionConfig: Codable, Hashable, Sendable {
         script: String? = nil
     ) {
         self.type = type
+        self.preset = preset
         self.keyCode = keyCode
         self.modifiers = modifiers
         self.bundleIdentifier = bundleIdentifier
@@ -146,18 +225,29 @@ public struct RecognizerTuning: Codable, Hashable, Sendable {
     /// Largest centroid travel a hold tolerates, in normalized units.
     public var holdMaxMovement: Double
 
+    /// Longest gap between two taps that still counts as a double tap, in
+    /// seconds. Optional so older configs decode; falls back to the default.
+    public var doubleTapMaxInterval: Double?
+
+    /// The effective double-tap window.
+    public var effectiveDoubleTapMaxInterval: Double {
+        doubleTapMaxInterval ?? 0.35
+    }
+
     public init(
         tapMaxDuration: Double = 0.25,
         tapMaxMovement: Double = 0.03,
         swipeMinMovement: Double = 0.08,
         holdMinDuration: Double = 0.5,
-        holdMaxMovement: Double = 0.03
+        holdMaxMovement: Double = 0.03,
+        doubleTapMaxInterval: Double? = 0.35
     ) {
         self.tapMaxDuration = tapMaxDuration
         self.tapMaxMovement = tapMaxMovement
         self.swipeMinMovement = swipeMinMovement
         self.holdMinDuration = holdMinDuration
         self.holdMaxMovement = holdMaxMovement
+        self.doubleTapMaxInterval = doubleTapMaxInterval
     }
 
     public static let `default` = RecognizerTuning()
@@ -171,6 +261,19 @@ public struct AppConfig: Codable, Hashable, Sendable {
     /// Whether the gesture engine is currently running.
     public var isEnabled: Bool
 
+    /// Whether MagicBind watches physical mouse buttons, which is what makes
+    /// `.click` gestures possible.
+    ///
+    /// Off by default and opt-in, because it requires a passive `CGEvent` tap —
+    /// the app observes button events rather than only posting them. See
+    /// SECURITY.md. Optional so pre-click configs decode unchanged.
+    public var mouseClicksEnabled: Bool?
+
+    /// The effective click-watching setting.
+    public var isMouseClicksEnabled: Bool {
+        mouseClicksEnabled ?? false
+    }
+
     public var tuning: RecognizerTuning
 
     public var bindings: [GestureBinding]
@@ -180,11 +283,13 @@ public struct AppConfig: Codable, Hashable, Sendable {
     public init(
         version: Int = AppConfig.currentVersion,
         isEnabled: Bool = true,
+        mouseClicksEnabled: Bool? = false,
         tuning: RecognizerTuning = .default,
         bindings: [GestureBinding] = []
     ) {
         self.version = version
         self.isEnabled = isEnabled
+        self.mouseClicksEnabled = mouseClicksEnabled
         self.tuning = tuning
         self.bindings = bindings
     }

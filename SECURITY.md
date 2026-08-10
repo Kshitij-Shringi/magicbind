@@ -43,6 +43,10 @@ Nothing leaves your device. Concretely:
   `~/Library/Application Support/MagicBind/config.json`. It is plain,
   hand-editable JSON containing your gesture bindings and recognizer
   thresholds. Nothing else.
+- **Mouse button watching is opt-in and narrow.** If you enable Click gestures,
+  MagicBind observes mouse button events — see
+  [the next section](#risk-disclosure-mouse-button-watching) for exactly what
+  that does and doesn't read. It is off by default.
 
 If you configure a `shellCommand` or `appleScript` action, *that command* can
 of course do anything you tell it to, including reaching the network. That is
@@ -90,11 +94,53 @@ via `CGEvent` is privileged.
 
 Be clear-eyed about what you are granting: Accessibility is a broad permission.
 An app that holds it *could* observe and synthesize input across your entire
-system. MagicBind only synthesizes the events your bindings ask for and never
-installs an event tap to observe your input — you can verify that in
-[ActionExecutor.swift](Sources/MagicBindCore/ActionExecutor.swift), which is
-the only file that touches `CGEvent`. But "trust me" is not a security model,
-which is why the whole thing is MIT-licensed and small enough to read.
+system. MagicBind synthesizes only the events your bindings ask for, in
+[ActionExecutor.swift](Sources/MagicBindCore/ActionExecutor.swift) — the only
+file that posts a `CGEvent`. But "trust me" is not a security model, which is
+why the whole thing is MIT-licensed and small enough to read.
+
+> [!IMPORTANT]
+> **This section changed in 0.2.0.** Earlier versions of this document promised
+> that MagicBind "never installs an event tap to observe your input". That is no
+> longer unconditionally true: enabling Click gestures installs a listen-only
+> tap on mouse button events. The section below describes exactly what it reads.
+> The guarantee that *nothing leaves your device* is unchanged.
+
+## Risk disclosure: mouse button watching
+
+Click gestures — "2-finger click", "middle button click" — need to know that you
+pressed a physical button. **Touch frames from the multitouch framework do not
+contain button state**, so there is no way to recognize a click without
+observing button events. That means an event tap.
+
+**It is off by default.** Turn it on in Settings → "Watch physical mouse
+buttons", or leave it off and use taps, holds, and swipes, which need no tap at
+all.
+
+What the tap does, in
+[MouseButtonMonitor.swift](Sources/MagicBindCore/MouseButtonMonitor.swift):
+
+- It is created with **`.listenOnly`**, so it *cannot* modify, suppress, or
+  inject events. Every click passes through to the app you clicked, unchanged.
+  MagicBind cannot swallow your clicks even by accident.
+- Its event mask covers **only** the six mouse button events (left/right/other,
+  down and up). Key events, scroll events, and mouse movement are not in the
+  mask and are never delivered to MagicBind.
+- From each event it reads **one field**: the button number. It does not read
+  the cursor location, the timestamp, the modifier flags, the click count, or
+  the target window.
+- Nothing is logged, buffered, or written to disk. The button number is turned
+  into a `GestureSpec`, matched against your bindings, and discarded.
+
+What you are nonetheless trusting: a listen-only tap still means the process
+receives a callback on every mouse button press system-wide, including presses
+inside your password manager or banking site. MagicBind ignores everything but
+the button number — but that is a property of the source code, not of the
+sandbox. If that tradeoff isn't worth Click gestures to you, leave the setting
+off. That's why it's a setting.
+
+For comparison: Logi Options+, BetterTouchTool, and Mac Mouse Fix all watch
+input this way, and most of them are closed source. This one you can read.
 
 ## Not sandboxed, and why
 

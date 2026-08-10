@@ -186,6 +186,10 @@ public extension ActionConfig {
             return type.displayName
         case .keyboardShortcut:
             return "\(type.displayName) · \(shortcutDisplayString ?? "not set")"
+        case .preset:
+            guard let preset else { return "\(type.displayName) · not set" }
+            guard let shortcut = preset.shortcutDisplayString else { return preset.displayName }
+            return "\(preset.displayName) · \(shortcut)"
         case .launchApp:
             return "\(type.displayName) · \(bundleIdentifier ?? "not set")"
         case .shellCommand:
