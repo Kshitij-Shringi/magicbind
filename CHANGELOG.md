@@ -12,8 +12,35 @@ to the configuration format. Any such change ships with a migration path in
 
 ## [Unreleased]
 
-Nothing yet. See [ProjectPlan.md](ProjectPlan.md) for what's planned next —
-Phase 2 is validating the reverse-engineered touch data against real hardware.
+### Added
+
+- Live keyboard shortcut capture in the binding editor. Click the shortcut
+  field, press the combination you want, and it records the key code and
+  modifiers — replacing the raw virtual-key-code and `CGEventFlags` number
+  fields. Escape cancels, Delete clears, and while armed a local event monitor
+  swallows key events so ⌘Q records rather than quitting. (Phase 4, item 1.)
+- `ShortcutModifiers` and `KeyboardShortcutFormatter` in `MagicBindCore`, which
+  render a key code and modifier set as the string a person recognizes ("⇧⌘4",
+  "⌃␣", "F5"). Key labels resolve against the user's **current keyboard
+  layout** via `UCKeyTranslate`, so an AZERTY or Dvorak user sees the key they
+  actually pressed rather than a US-ANSI guess. Modifier glyphs use Apple's
+  menu ordering (fn ⇪ ⌃ ⌥ ⇧ ⌘).
+- The bindings list now summarizes each action instead of only naming its type
+  — a keyboard-shortcut binding shows its shortcut, a launch-app binding shows
+  its bundle identifier.
+- 15 more tests, covering modifier glyph ordering, that `ShortcutModifiers` raw
+  values still match `CGEventFlags`, special-key glyphs, and that the
+  numeric-pad flag macOS sets on arrow keys is excluded from display.
+
+### Fixed
+
+- Selecting a different binding while a shortcut field was recording could
+  capture the next keypress into the newly selected binding. The editor is now
+  keyed by binding identity, so switching selection tears down the recorder.
+
+See [ProjectPlan.md](ProjectPlan.md) for what's planned next — Phase 2,
+validating the reverse-engineered touch data against real hardware, is still
+the highest-value work.
 
 ## [0.1.0] - 2026-08-10
 

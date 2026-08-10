@@ -271,6 +271,7 @@ ActionExecutor     fires the action via CGEvent / NSWorkspace / AppleScript
 | [GestureRecognizer.swift](Sources/MagicBindCore/GestureRecognizer.swift) | Frames → gestures. Pure logic, fully testable. |
 | [Models.swift](Sources/MagicBindCore/Models.swift) | `GestureSpec`, `GestureBinding`, `ActionConfig`, `AppConfig`. |
 | [ConfigStore.swift](Sources/MagicBindCore/ConfigStore.swift) | JSON persistence and migration. |
+| [KeyboardShortcut.swift](Sources/MagicBindCore/KeyboardShortcut.swift) | `ShortcutModifiers` + layout-aware shortcut formatting. Raw values must stay in sync with `CGEventFlags`. |
 | [ActionExecutor.swift](Sources/MagicBindCore/ActionExecutor.swift) | The only file that posts `CGEvent`s. |
 | [GestureEngine.swift](Sources/MagicBindCore/GestureEngine.swift) | Wires the pipeline together. |
 | [Sources/MagicBind/](Sources/MagicBind/) | Menu bar app and SwiftUI preferences. |
@@ -289,8 +290,6 @@ proposing recognizer tuning that's already planned.
 
 ## Good first contributions
 
-- **Live keyboard-shortcut capture** in the binding editor, replacing the raw
-  virtual-key-code fields. Currently the single roughest edge in the UI.
 - **SF Symbol icons per `ActionType`** in the bindings list.
 - **Import/export config** from the preferences window via
   `NSOpenPanel`/`NSSavePanel`.
