@@ -1,0 +1,216 @@
+# MagicBind
+
+[![CI](https://github.com/Kshitij-Shringi/magicbind/actions/workflows/ci.yml/badge.svg)](https://github.com/Kshitij-Shringi/magicbind/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform: macOS 13+](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey.svg)](#requirements)
+[![Swift 5.9](https://img.shields.io/badge/swift-5.9-orange.svg)](https://swift.org)
+
+**An open-source gesture manager for the Apple Magic Mouse and Magic Trackpad.**
+Bind any N-finger tap, swipe, or hold to any action — a middle click, a keyboard
+shortcut, launching an app, a shell command, or an AppleScript.
+
+> [!WARNING]
+> **MagicBind is a v0.1 scaffold, not a finished product.** The architecture is
+> in place and the logic is tested, but the recognizer thresholds are untested
+> guesses that need calibration against real hardware, and the reverse-engineered
+> `MTFinger` struct layout is unverified on your specific macOS version. See
+> [Status](#status) before installing. Contributions very welcome.
+
+## What this is
+
+Buy a Logitech MX Master and you get [Logi Options+][logi]: button remapping,
+gesture buttons, per-app profiles, pointer tuning. Buy Apple's own Magic Mouse
+and you get three checkboxes in System Settings.
+
+The touch surface on a Magic Mouse can sense five fingers. macOS uses almost
+none of that. MagicBind is an attempt to close that gap with something free,
+open, auditable, and local — no account, no cloud, no telemetry.
+
+[logi]: https://www.logitech.com/en-us/software/logi-options-plus.html
+
+## Feature parity vs Logi Options+
+
+Where MagicBind stands against what an MX Master owner gets. This is a roadmap
+as much as a comparison — most rows are not built yet.
+
+| Capability | Logi Options+ (MX Master 3) | MagicBind (Magic Mouse) | Status |
+|---|---|---|---|
+| Button remapping | Remap physical buttons | Gesture → action mapping (the Magic Mouse has no discrete buttons beyond click) | ✅ v0.1 |
+| Action library | Fixed catalog of actions | Middle click, keyboard shortcut, launch app, shell command, AppleScript | ✅ v0.1 |
+| Gesture button | Hold a button + move the mouse | N-finger swipe gestures (up/down/left/right) | ✅ v0.1 |
+| Config storage | Cloud-synced account | Local hand-editable JSON, git-friendly, syncable via any folder-sync tool | ✅ v0.1 |
+| Shortcut recording | Press a key to record it | Raw virtual key codes for now — [live capture is Phase 4][plan] | ⚠️ Partial |
+| Preferences UI | Polished, with animations | Functional SwiftUI list + editor, no gesture animations | ⚠️ Partial |
+| Pointer speed / acceleration | Sliders | Planned — [Phase 5][plan] | ❌ Planned |
+| Scroll direction & smooth scroll | Sliders and toggles | Planned — [Phase 5][plan] | ❌ Planned |
+| Per-app profiles | Auto-switching per app | Planned — [Phase 6][plan] | ❌ Planned |
+| Onboarding wizard | Guided first run | Planned — [Phase 7][plan] | ❌ Planned |
+| Auto-update | Built in | Planned, via Sparkle — [Phase 7][plan] | ❌ Planned |
+| Homebrew install | — | Planned — [Phase 7][plan] | ❌ Planned |
+| Telemetry | Collects usage data | **None, by design** | ✅ Never |
+| Price | Free, closed source, account-based | Free, MIT, no account | ✅ |
+
+[plan]: ProjectPlan.md
+
+## How it works
+
+```
+MultitouchReader    dlopen's Apple's private MultitouchSupport.framework,
+      |             emits raw touch frames
+      v
+GestureRecognizer   turns frames into discrete tap / swipe / hold GestureSpecs
+      |
+      v
+GestureEngine       looks up a matching GestureBinding in ConfigStore
+      |
+      v
+ActionExecutor      fires the action via CGEvent / NSWorkspace / AppleScript
+```
+
+Config lives in plain JSON at
+`~/Library/Application Support/MagicBind/config.json`, so you can hand-edit
+bindings, keep them in a dotfiles repo, or diff them.
+
+Out of the box: **3-finger tap → middle click**, and **4-finger tap →
+screenshot region** (⌘⇧4).
+
+## Requirements
+
+- macOS 13 (Ventura) or later
+- A Magic Mouse or Magic Trackpad
+- Xcode 15+ to build (Command Line Tools alone can build, but not run the tests)
+
+## Install
+
+No prebuilt release yet — there's no signed, notarized binary to hand you, and
+[you shouldn't run an unsigned Accessibility app someone else built](SECURITY.md#not-sandboxed-and-why).
+Build it yourself; it takes about a minute.
+
+```sh
+git clone https://github.com/Kshitij-Shringi/magicbind.git
+cd magicbind
+./Scripts/build_app.sh
+open build/MagicBind.app
+```
+
+`build_app.sh` compiles a release build, wraps it into a proper
+`MagicBind.app` bundle, and ad-hoc signs it. The bundle matters: macOS grants
+Accessibility permission per bundle identifier, and the menu-bar-only behavior
+comes from the bundle's `Info.plist`.
+
+MagicBind runs as a menu bar item with no Dock icon. Open **Preferences…** from
+the menu bar to edit bindings.
+
+<details>
+<summary>Building without the app bundle</summary>
+
+```sh
+swift build -c release    # binary at .build/release/MagicBind
+swift build               # debug
+open Package.swift        # or work in Xcode
+```
+
+Running the bare executable is fine for compile-checking, but Accessibility
+permission won't stick reliably, so gestures won't fire. Use the `.app`.
+
+</details>
+
+Homebrew cask and notarized releases are [Phase 7][plan].
+
+## Permissions, and why each is needed
+
+MagicBind asks for two things. Both are load-bearing, and neither sends data
+anywhere.
+
+| Permission | Why it's required | What happens without it |
+|---|---|---|
+| **Accessibility**<br>*System Settings → Privacy & Security → Accessibility* | Posting a synthetic middle click or keystroke through `CGEvent` is privileged. This is how a bound action actually reaches the app you're using. | The app runs and recognizes gestures, but every action silently fails. |
+| **Automation / Apple Events**<br>*prompted on first use* | Only for `appleScript` actions. Requested lazily, per target app, by macOS itself. | AppleScript bindings fail. Everything else works. |
+
+You'll be prompted for Accessibility on first launch. Grant it, then **relaunch
+the app** — macOS doesn't extend the permission to an already-running process.
+
+> [!NOTE]
+> Accessibility is a broad permission, and you should be skeptical of anything
+> that asks for it. MagicBind never installs an event tap to *observe* your
+> input — it only *posts* the events your bindings ask for. The only file that
+> touches `CGEvent` is
+> [ActionExecutor.swift](Sources/MagicBindCore/ActionExecutor.swift), which is
+> about 150 lines. Read it.
+
+MagicBind is **not sandboxed** and cannot be: the App Sandbox blocks both the
+private framework and `CGEvent` posting. That rules out the Mac App Store.
+Details in [SECURITY.md](SECURITY.md).
+
+## Status
+
+**What works:** the pipeline is complete end to end, `GestureRecognizer` and
+`ConfigStore` are covered by tests, and the preferences UI can add, edit, and
+delete bindings.
+
+**What to be skeptical about:**
+
+- **Recognizer thresholds are guesses.** `tapMaxDuration`, `swipeMinMovement`
+  and friends in [Models.swift](Sources/MagicBindCore/Models.swift) were chosen
+  by reasoning, not measurement. Expect false triggers or missed gestures until
+  they're calibrated. They're exposed in the Tuning tab so you can adjust them
+  without rebuilding.
+- **The `MTFinger` struct layout is reverse-engineered.** It mirrors the
+  commonly documented shape of Apple's private struct. If it's wrong for your
+  macOS version, you'll get garbage coordinates. Validating this against real
+  frames is [Phase 2][plan] and the highest-value thing a contributor could do.
+- **Private frameworks break.** Apple can change or remove
+  `MultitouchSupport.framework` symbols in any update, and historically has.
+  MagicBind resolves them at runtime, so it degrades to "gestures stop working"
+  rather than crashing — but budget for maintenance.
+- **No live shortcut capture yet.** Keyboard shortcut bindings take raw virtual
+  key codes (e.g. `21` is `4` on US ANSI). A "press a key to record" field is
+  the best-scoped first contribution available.
+
+The full phase-by-phase plan is in [ProjectPlan.md](ProjectPlan.md).
+
+## Prior art and credits
+
+MagicBind did not appear from nowhere. These projects mapped the territory
+first, and it's worth using them if they fit your needs better:
+
+- **[MiddleClick](https://github.com/artginzburg/MiddleClick)** by
+  [@artginzburg](https://github.com/artginzburg) — three-finger tap → middle
+  click, and nothing else. Focused, actively maintained, and the reference for
+  how to talk to `MultitouchSupport.framework` at all. **If a middle click is
+  all you need, use MiddleClick — it's more mature than this.**
+- **[Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix)** by
+  [@noah-nuebling](https://github.com/noah-nuebling) — a far richer
+  button→action mapping engine with a genuinely polished preferences UI, and the
+  model this project's action mapping is shaped after. It deliberately targets
+  standard USB/Bluetooth mice and **does not support the Magic Mouse**, which is
+  the specific gap MagicBind exists to fill.
+- **[BetterTouchTool](https://folivora.ai)** by Andreas Hegenberg — the paid,
+  closed-source product that does all of this and much more, extremely well. If
+  you want something that works today and don't mind paying, buy BTT.
+- The broader reverse-engineering of Apple's multitouch API, documented over
+  years across projects like [`mtrack`](https://github.com/dhruvbird/mtrack),
+  `fingermgmt`, and many blog posts. The `MTFinger` layout here descends from
+  that shared work.
+
+## Contributing
+
+Contributions are welcome — see **[CONTRIBUTING.md](CONTRIBUTING.md)** for build
+steps, branch naming, Conventional Commits, and how review works.
+
+Fastest ways to help:
+
+1. **Validate the touch data on your Mac** ([Phase 2][plan]) — this unblocks
+   everything else.
+2. **Add live keyboard-shortcut capture** to the binding editor.
+3. **Report what breaks** on your hardware and macOS version.
+
+Please read the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go
+through [SECURITY.md](SECURITY.md), privately — not a public issue.
+
+## License
+
+[MIT](LICENSE) © 2026 Kshitij Shringi
+
+Do whatever you want with it. If you ship something built on this, a link back
+is appreciated but not required.
