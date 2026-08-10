@@ -3,9 +3,8 @@ import SwiftUI
 
 /// Editor for a single binding: which gesture, and what it does.
 ///
-/// Keyboard shortcuts are still entered as raw virtual key codes here — a
-/// live "press a key to record" control is Phase 4 work, and a good first
-/// contribution.
+/// Keyboard shortcuts are captured live by `ShortcutRecorderView` rather than
+/// typed as virtual key codes.
 struct BindingEditView: View {
     @Binding var binding: GestureBinding
 
@@ -41,16 +40,12 @@ struct BindingEditView: View {
                         .foregroundStyle(.secondary)
 
                 case .keyboardShortcut:
-                    OptionalIntField(
-                        label: "Key code",
-                        value: $binding.action.keyCode,
-                        help: "Virtual key code, e.g. 21 is \"4\" on a US ANSI layout."
-                    )
-                    OptionalIntField(
-                        label: "Modifiers",
-                        value: $binding.action.modifiers,
-                        help: "CGEventFlags raw value. Command is 1048576, Shift is 131072."
-                    )
+                    LabeledContent("Shortcut") {
+                        ShortcutRecorderView(
+                            keyCode: $binding.action.keyCode,
+                            modifiers: $binding.action.modifiers
+                        )
+                    }
 
                 case .launchApp:
                     OptionalTextField(
@@ -99,30 +94,5 @@ struct OptionalTextField: View {
             axis: axis
         )
         .lineLimit(axis == .vertical ? 3...8 : 1...1)
-    }
-}
-
-/// A numeric field bound to an optional integer of any width.
-struct OptionalIntField<Value: FixedWidthInteger>: View {
-    let label: String
-    @Binding var value: Value?
-    var help: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            TextField(
-                label,
-                text: Binding(
-                    get: { value.map(String.init) ?? "" },
-                    set: { value = $0.isEmpty ? nil : Value($0) }
-                ),
-                prompt: Text("none")
-            )
-            if let help {
-                Text(help)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }

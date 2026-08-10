@@ -101,6 +101,12 @@ struct PreferencesView: View {
             Group {
                 if let index = selectedIndex {
                     BindingEditView(binding: $state.config.bindings[index])
+                        // Tie the editor's identity to the binding so switching
+                        // selection tears it down and rebuilds it. Without this
+                        // SwiftUI reuses the view, and an in-progress shortcut
+                        // recording would capture into the newly selected
+                        // binding instead of being cancelled.
+                        .id(state.config.bindings[index].id)
                 } else {
                     ContentUnavailableMessage(
                         title: "No Binding Selected",
@@ -194,9 +200,11 @@ struct BindingRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(binding.gesture.displayName)
-                Text(binding.action.type.displayName)
+                Text(binding.action.displaySummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer()
             if !binding.isEnabled {

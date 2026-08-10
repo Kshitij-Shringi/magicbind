@@ -39,7 +39,7 @@ as much as a comparison — most rows are not built yet.
 | Action library | Fixed catalog of actions | Middle click, keyboard shortcut, launch app, shell command, AppleScript | ✅ v0.1 |
 | Gesture button | Hold a button + move the mouse | N-finger swipe gestures (up/down/left/right) | ✅ v0.1 |
 | Config storage | Cloud-synced account | Local hand-editable JSON, git-friendly, syncable via any folder-sync tool | ✅ v0.1 |
-| Shortcut recording | Press a key to record it | Raw virtual key codes for now — [live capture is Phase 4][plan] | ⚠️ Partial |
+| Shortcut recording | Press a key to record it | Click the field, press the shortcut — rendered as ⇧⌘4, resolved against your keyboard layout | ✅ v0.1 |
 | Preferences UI | Polished, with animations | Functional SwiftUI list + editor, no gesture animations | ⚠️ Partial |
 | Pointer speed / acceleration | Sliders | Planned — [Phase 5][plan] | ❌ Planned |
 | Scroll direction & smooth scroll | Sliders and toggles | Planned — [Phase 5][plan] | ❌ Planned |
@@ -163,9 +163,10 @@ delete bindings.
   `MultitouchSupport.framework` symbols in any update, and historically has.
   MagicBind resolves them at runtime, so it degrades to "gestures stop working"
   rather than crashing — but budget for maintenance.
-- **No live shortcut capture yet.** Keyboard shortcut bindings take raw virtual
-  key codes (e.g. `21` is `4` on US ANSI). A "press a key to record" field is
-  the best-scoped first contribution available.
+- **Shortcut recording swallows keys while armed.** While the shortcut field is
+  recording, a local event monitor consumes key events so that ⌘Q records
+  instead of quitting. Escape cancels and Delete clears; if a field ever seems
+  stuck, click it again to disarm.
 
 The full phase-by-phase plan is in [ProjectPlan.md](ProjectPlan.md).
 
@@ -202,7 +203,7 @@ Fastest ways to help:
 
 1. **Validate the touch data on your Mac** ([Phase 2][plan]) — this unblocks
    everything else.
-2. **Add live keyboard-shortcut capture** to the binding editor.
+2. **Add SF Symbol icons per action type** to the bindings list.
 3. **Report what breaks** on your hardware and macOS version.
 
 Please read the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues go
