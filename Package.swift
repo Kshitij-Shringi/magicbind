@@ -13,6 +13,11 @@ let package = Package(
             name: "MagicBind",
             dependencies: ["MagicBindCore"],
             path: "Sources/MagicBind"
+        ),
+        .testTarget(
+            name: "MagicBindCoreTests",
+            dependencies: ["MagicBindCore"],
+            path: "Tests/MagicBindCoreTests"
         )
     ]
 )
