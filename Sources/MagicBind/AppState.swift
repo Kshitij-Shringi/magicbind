@@ -4,19 +4,11 @@ import Foundation
 import MagicBindCore
 import SwiftUI
 
-/// Which screen the canvas is showing.
-enum AppScreen: Hashable {
-    case device
-    case customGestures
-    case settings
-
-    var title: String {
-        switch self {
-        case .device: return "Device"
-        case .customGestures: return "Custom gestures"
-        case .settings: return "Settings"
-        }
-    }
+/// A sidebar group of bindings sharing a gesture kind.
+struct BindingGroup: Identifiable {
+    let id: String
+    let title: String
+    let bindings: [GestureBinding]
 }
 
 /// The app's single source of truth: owns the config store and the engine, and
@@ -36,25 +28,28 @@ final class AppState: ObservableObject {
         }
     }
 
-    @Published var screen: AppScreen = .device
-    @Published var selectedBindingID: GestureBinding.ID?
-    @Published var actionSearch: String = ""
+    @Published var selection: Selection?
+    @Published var sidebarSearch: String = ""
 
-    /// Which finger count the Custom gestures screen is showing.
-    @Published var gestureScreenFingerCount: Int = 3
-
-    /// Section expansion in the Actions panel, keyed by section id.
-    @Published private var expandedSections: [String: Bool] = [:]
-
-    /// The most recent error, surfaced in the window footer.
+    /// The most recent error, surfaced in the status bar.
     @Published var lastErrorMessage: String?
 
-    /// The most recently recognized gesture, so the UI can show that the
-    /// pipeline is alive even before a binding matches.
+    /// The most recently recognized gesture, and which device produced it.
     @Published var lastGesture: GestureSpec?
+    @Published var lastGestureDescription: String?
+
+    /// Devices the reader found at startup.
+    @Published private(set) var detectedDevices: [MTDeviceInfo] = []
 
     @Published private(set) var isEngineRunning = false
     @Published private(set) var isWatchingMouseButtons = false
+
+    /// Touch frames delivered so far, polled for the status bar. Zero while you
+    /// are touching the device means the reader is dead — a completely different
+    /// problem from a mis-tuned threshold, and worth being able to see at once.
+    @Published private(set) var frameCount = 0
+
+    private var frameCountTimer: Timer?
 
     private let store: ConfigStore
     private let engine: GestureEngine
@@ -71,13 +66,20 @@ final class AppState: ObservableObject {
             self.lastErrorMessage = error.localizedDescription
         }
         self.config = store.config
-        self.selectedBindingID = store.config.bindings.first?.id
+        self.selection = store.config.bindings.first.map { Selection.binding($0.id) }
 
         engine.errorHandler = { [weak self] error in
             Task { @MainActor in self?.lastErrorMessage = error.localizedDescription }
         }
-        engine.gestureHandler = { [weak self] gesture in
-            Task { @MainActor in self?.lastGesture = gesture }
+        engine.gestureHandler = { [weak self] gesture, device in
+            Task { @MainActor in
+                self?.lastGesture = gesture
+                let source = device?.displayName ?? "unknown device"
+                self?.lastGestureDescription = "\(gesture.displayName) · \(source)"
+            }
+        }
+        engine.devicesHandler = { [weak self] devices in
+            Task { @MainActor in self?.detectedDevices = devices }
         }
     }
 
@@ -98,11 +100,30 @@ final class AppState: ObservableObject {
         } catch {
             lastErrorMessage = error.localizedDescription
         }
+        detectedDevices = engine.devices
         isWatchingMouseButtons = engine.isWatchingMouseButtons
+        startFrameCountPolling()
+    }
+
+    /// Polls rather than publishing per frame: frames arrive hundreds of times a
+    /// second, and driving SwiftUI at that rate would be absurd.
+    private func startFrameCountPolling() {
+        frameCountTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let latest = self.engine.frameCount
+                if latest != self.frameCount { self.frameCount = latest }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        frameCountTimer = timer
     }
 
     func stopEngine() {
         guard isEngineRunning else { return }
+        frameCountTimer?.invalidate()
+        frameCountTimer = nil
         engine.stop()
         isEngineRunning = false
         isWatchingMouseButtons = false
@@ -120,7 +141,90 @@ final class AppState: ObservableObject {
         isWatchingMouseButtons = engine.isWatchingMouseButtons
     }
 
+    // MARK: - Devices
+
+    /// Kinds actually attached right now.
+    var detectedKinds: Set<DeviceKind> {
+        Set(detectedDevices.map(\.kind))
+    }
+
+    /// Kinds worth offering in a "runs on" list: what's attached, plus anything
+    /// the user has already scoped a binding to, so an unplugged device's
+    /// bindings stay editable.
+    var knownDeviceKinds: [DeviceKind] {
+        var kinds = detectedKinds
+        for binding in config.bindings {
+            kinds.formUnion(binding.deviceKinds ?? [])
+        }
+        if kinds.isEmpty {
+            kinds = [.magicMouse]
+        }
+        return DeviceKind.allCases.filter { kinds.contains($0) }
+    }
+
+    var enabledDeviceCount: Int {
+        detectedDevices.filter { config.isDeviceEnabled($0.kind) }.count
+    }
+
+    func deviceEnabledBinding(_ kind: DeviceKind) -> Binding<Bool> {
+        Binding(
+            get: { [weak self] in self?.config.isDeviceEnabled(kind) ?? false },
+            set: { [weak self] isEnabled in
+                self?.config.setDeviceEnabled(kind, isEnabled)
+            }
+        )
+    }
+
+    // MARK: - Sidebar
+
+    /// Bindings grouped by gesture kind, filtered by the search field.
+    var bindingGroups: [BindingGroup] {
+        let query = sidebarSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matching = query.isEmpty
+            ? config.bindings
+            : config.bindings.filter { matches($0, query: query) }
+
+        return GestureKind.allCases.compactMap { kind in
+            let group = matching.filter { $0.gesture.kind == kind }
+            guard !group.isEmpty else { return nil }
+            return BindingGroup(
+                id: kind.rawValue,
+                title: pluralTitle(for: kind),
+                bindings: group.sorted { $0.gesture.fingerCount < $1.gesture.fingerCount }
+            )
+        }
+    }
+
+    private func matches(_ binding: GestureBinding, query: String) -> Bool {
+        let haystack = [
+            binding.gesture.displayName,
+            binding.action.displaySummary
+        ].joined(separator: " ")
+        return haystack.range(
+            of: query,
+            options: [.caseInsensitive, .diacriticInsensitive]
+        ) != nil
+    }
+
+    private func pluralTitle(for kind: GestureKind) -> String {
+        switch kind {
+        case .tap: return "Taps"
+        case .doubleTap: return "Double Taps"
+        case .click: return "Clicks"
+        case .hold: return "Holds"
+        case .swipeUp: return "Swipe Up"
+        case .swipeDown: return "Swipe Down"
+        case .swipeLeft: return "Swipe Left"
+        case .swipeRight: return "Swipe Right"
+        }
+    }
+
     // MARK: - Selection
+
+    var selectedBindingID: GestureBinding.ID? {
+        guard case .binding(let id) = selection else { return nil }
+        return id
+    }
 
     var selectedBindingIndex: Int? {
         guard let selectedBindingID else { return nil }
@@ -131,58 +235,27 @@ final class AppState: ObservableObject {
         selectedBindingIndex.map { config.bindings[$0] }
     }
 
-    /// The bindings shown around the device on the overview screen.
-    ///
-    /// Swipes live on the Custom gestures screen, where direction can be shown
-    /// spatially, so they're excluded here to keep the overview readable.
-    var overviewBindings: [GestureBinding] {
-        config.bindings.filter { !$0.gesture.kind.isSwipe }
-    }
-
-    func binding(for spec: GestureSpec) -> GestureBinding? {
-        config.bindings.first { $0.gesture == spec }
-    }
-
-    /// Selects the binding for a gesture, creating an unassigned one if the
-    /// slot is empty — so clicking an "Unassigned" direction just works.
-    func selectOrCreate(spec: GestureSpec) {
-        if let existing = binding(for: spec) {
-            selectedBindingID = existing.id
-            return
-        }
-        let binding = GestureBinding(
-            gesture: spec,
-            action: ActionConfig(type: .middleClick)
-        )
-        config.bindings.append(binding)
-        selectedBindingID = binding.id
-    }
-
     // MARK: - Bindings
 
     func addBinding() {
-        // Default to a gesture that isn't already bound, so the new chip is
-        // immediately usable instead of shadowing an existing binding.
         let spec = firstUnboundSpec()
         let binding = GestureBinding(
             gesture: spec,
             action: ActionConfig(type: .middleClick)
         )
         config.bindings.append(binding)
-        selectedBindingID = binding.id
-        if spec.kind.isSwipe {
-            gestureScreenFingerCount = spec.fingerCount
-            screen = .customGestures
-        } else {
-            screen = .device
-        }
+        selection = .binding(binding.id)
     }
 
+    /// Picks a gesture that isn't already bound, so a new row is immediately
+    /// usable instead of shadowing an existing binding.
     private func firstUnboundSpec() -> GestureSpec {
-        for kind in [GestureKind.tap, .doubleTap, .hold, .click] {
+        for kind in [GestureKind.tap, .doubleTap, .hold, .swipeLeft, .swipeRight, .click] {
             for fingers in 2...5 {
                 let spec = GestureSpec(fingerCount: fingers, kind: kind)
-                if binding(for: spec) == nil { return spec }
+                if !config.bindings.contains(where: { $0.gesture == spec }) {
+                    return spec
+                }
             }
         }
         return GestureSpec(fingerCount: 3, kind: .tap)
@@ -191,46 +264,47 @@ final class AppState: ObservableObject {
     func deleteSelectedBinding() {
         guard let index = selectedBindingIndex else { return }
         config.bindings.remove(at: index)
-        selectedBindingID = config.bindings.first?.id
+        selection = config.bindings.first.map { Selection.binding($0.id) }
     }
 
     func resetToDefaults() {
         config = ConfigStore.defaultConfig
-        selectedBindingID = config.bindings.first?.id
+        selection = config.bindings.first.map { Selection.binding($0.id) }
     }
 
-    // MARK: - Actions panel
+    /// Warns when another enabled binding claims the same gesture on an
+    /// overlapping device, since only the first one found will ever run.
+    func conflictDescription(forBindingAt index: Int) -> String? {
+        guard config.bindings.indices.contains(index) else { return nil }
+        let binding = config.bindings[index]
+        guard binding.isEnabled else { return nil }
 
-    var filteredActionSections: [ActionSection] {
-        ActionCatalog.sections(matching: actionSearch)
-    }
-
-    func isSectionExpanded(_ id: String, default defaultValue: Bool) -> Bool {
-        expandedSections[id] ?? defaultValue
-    }
-
-    func toggleSection(_ id: String, default defaultValue: Bool) {
-        expandedSections[id] = !isSectionExpanded(id, default: defaultValue)
-    }
-
-    /// Applies a catalog template to the selected binding.
-    ///
-    /// Templates needing input only set the action *type*, preserving any
-    /// parameters already entered — so re-selecting "Keyboard Shortcut" doesn't
-    /// wipe the shortcut the user just recorded.
-    func select(template: ActionTemplate) {
-        guard let index = selectedBindingIndex else { return }
-
-        switch template.kind {
-        case .ready(let action):
-            config.bindings[index].action = action
-        case .needsInput(let type):
-            guard config.bindings[index].action.type != type else { return }
-            var action = config.bindings[index].action
-            action.type = type
-            action.preset = nil
-            config.bindings[index].action = action
+        let others = config.bindings.enumerated().filter { offset, other in
+            offset != index
+                && other.isEnabled
+                && other.gesture == binding.gesture
+                && !overlappingKinds(binding, other).isEmpty
         }
+        guard let (_, first) = others.first else { return nil }
+
+        let shared = overlappingKinds(binding, first)
+            .map(\.displayName)
+            .sorted()
+            .joined(separator: ", ")
+        return """
+            Another enabled binding uses this same gesture on \(shared) \
+            (\(first.action.displaySummary)). Only the first match runs.
+            """
+    }
+
+    private func overlappingKinds(
+        _ lhs: GestureBinding,
+        _ rhs: GestureBinding
+    ) -> Set<DeviceKind> {
+        let all = Set(knownDeviceKinds)
+        let left = lhs.deviceKinds ?? all
+        let right = rhs.deviceKinds ?? all
+        return left.intersection(right).filter { config.isDeviceEnabled($0) }
     }
 
     // MARK: - Config file

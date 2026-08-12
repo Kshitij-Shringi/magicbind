@@ -1,237 +1,172 @@
-import Foundation
 import MagicBindCore
 import SwiftUI
 
-/// The window: device canvas on the left, Actions panel on the right.
+/// What the detail pane is showing.
+enum Selection: Hashable {
+    case binding(GestureBinding.ID)
+    case devices
+    case tuning
+    case about
+}
+
+/// The window: a sidebar listing every binding, and a detail pane for whatever
+/// is selected.
+///
+/// The sidebar holds the *complete* list of bindings, grouped by gesture kind.
+/// An earlier design split them across two screens — taps on one, swipes on
+/// another — with no indication from either that the other existed, so there was
+/// no way to see everything you'd bound. One list fixes that.
 struct MainWindowView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
-        HStack(spacing: 0) {
-            canvas
-            Divider().overlay(Theme.hairline)
-            ActionsPanelView()
+        NavigationSplitView {
+            SidebarView()
+                .navigationSplitViewColumnWidth(
+                    min: Metrics.sidebarMinWidth,
+                    ideal: Metrics.sidebarIdealWidth
+                )
+        } detail: {
+            detail
+                .frame(minWidth: Metrics.detailMinWidth)
         }
-        .background(Theme.canvasBackground)
-        // The device illustration and palette are drawn for a dark background,
-        // so the window commits to dark rather than adapting.
-        .preferredColorScheme(.dark)
-    }
-
-    private var canvas: some View {
-        VStack(spacing: 0) {
-            toolbar
-
-            ZStack {
-                switch state.screen {
-                case .device:
-                    DeviceScreen()
-                case .customGestures:
-                    CustomGesturesScreen()
-                case .settings:
-                    TuningSettingsScreen()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            footer
-        }
-        .frame(minWidth: 640)
-    }
-
-    // MARK: - Toolbar
-
-    private var toolbar: some View {
-        HStack(spacing: 0) {
-            Button {
-                state.screen = .device
-            } label: {
-                Image(systemName: "arrow.left")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(
-                        state.screen == .device ? Theme.secondaryText : Theme.primaryText
-                    )
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(state.screen == .device)
-            .help("Back to the device overview")
-
-            if state.screen != .device {
-                Text(state.screen.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Theme.primaryText)
-                    .padding(.leading, 6)
-            }
-
-            Spacer()
-
-            HStack(spacing: 4) {
-                toolbarTab(.device, symbol: "circle.grid.2x2")
-                toolbarTab(.customGestures, symbol: "arrow.up.arrow.down.circle")
-                toolbarTab(.settings, symbol: "slider.horizontal.3")
-
+        .navigationTitle("MagicBind")
+        .toolbar {
+            ToolbarItemGroup {
                 Button {
                     state.addBinding()
                 } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.primaryText)
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
+                    Label("Add Gesture", systemImage: "plus")
                 }
-                .buttonStyle(.plain)
                 .help("Add a gesture")
-            }
 
-            Spacer()
-
-            // Balances the leading back button so the tabs stay centered.
-            Color.clear.frame(width: 30, height: 30)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private func toolbarTab(_ screen: AppScreen, symbol: String) -> some View {
-        let isActive = state.screen == screen
-        return Button {
-            state.screen = screen
-        } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(isActive ? Theme.accent : Theme.secondaryText)
-                .frame(width: 34, height: 30)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(isActive ? Theme.accent : Color.clear)
-                        .frame(height: 2)
+                Button {
+                    state.deleteSelectedBinding()
+                } label: {
+                    Label("Remove Gesture", systemImage: "minus")
                 }
-                .contentShape(Rectangle())
+                .disabled(state.selectedBindingIndex == nil)
+                .help("Remove the selected gesture")
+            }
         }
-        .buttonStyle(.plain)
-        .help(screen.title)
+        .safeAreaInset(edge: .bottom) {
+            StatusBar()
+        }
     }
 
-    // MARK: - Footer
-
-    private var footer: some View {
-        HStack(spacing: 10) {
-            StatusBadge()
-
-            if let message = state.lastErrorMessage {
-                Text(message)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.danger)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+    @ViewBuilder
+    private var detail: some View {
+        switch state.selection {
+        case .binding:
+            if let index = state.selectedBindingIndex {
+                BindingDetailView(bindingIndex: index)
+                    // Rebuild when the selection changes so the shortcut
+                    // recorder can't outlive the binding it was recording for.
+                    .id(state.config.bindings[index].id)
+            } else {
+                EmptyDetail(
+                    symbol: "hand.tap",
+                    title: "No Gesture Selected",
+                    message: "Pick a gesture in the sidebar, or add one with +."
+                )
             }
-
-            Spacer()
-
-            if let gesture = state.lastGesture {
-                Text("Last: \(gesture.displayName)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.secondaryText)
-            }
+        case .devices:
+            DevicesView()
+        case .tuning:
+            TuningView()
+        case .about:
+            AboutView()
+        case .none:
+            EmptyDetail(
+                symbol: "hand.tap",
+                title: "No Gesture Selected",
+                message: "Pick a gesture in the sidebar, or add one with +."
+            )
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 18)
-        .padding(.top, 8)
     }
 }
 
-/// ACTIVE / INACTIVE, matching the badge position in Logi Options+.
-struct StatusBadge: View {
+/// Engine status and the last recognized gesture, pinned to the window bottom.
+struct StatusBar: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
         let isLive = state.isEngineRunning && state.config.isEnabled
 
-        return Button {
-            state.toggleEnabled()
-        } label: {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(isLive ? Theme.statusActive : Theme.statusInactive)
-                    .frame(width: 6, height: 6)
-                Text(isLive ? "ACTIVE" : "INACTIVE")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(isLive ? Theme.primaryText : Theme.secondaryText)
+        HStack(spacing: 8) {
+            Circle()
+                .fill(isLive ? Color.green : Color.secondary)
+                .frame(width: 7, height: 7)
+
+            Text(isLive ? "Listening for gestures" : "Not listening")
+                .font(.caption)
+
+            if let message = state.lastErrorMessage {
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(message)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .overlay(
-                RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.hairline)
-            )
-            .contentShape(Rectangle())
+
+            Spacer()
+
+            // The reader's pulse. Zero here while touching the device is the
+            // signature of a dead reader.
+            Text("frames \(state.frameCount)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(state.frameCount == 0 ? .orange : .secondary)
+                .help(
+                    state.frameCount == 0
+                        ? """
+                            No touch frames received yet. Touch the device — if \
+                            this stays at 0, the reader is not working.
+                            """
+                        : "Touch frames received from the multitouch reader."
+                )
+
+            if let gesture = state.lastGesture {
+                // The single most useful diagnostic for "is the touch data
+                // working on this Mac at all" — docs/TESTING.md leans on it.
+                Text(state.lastGestureDescription ?? gesture.displayName)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Enabled", isOn: $state.config.isEnabled)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
         }
-        .buttonStyle(.plain)
-        .help(isLive ? "Click to disable gestures" : "Click to enable gestures")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(.bar)
     }
 }
 
-/// The overview: the device with every non-swipe binding arranged around it.
-struct DeviceScreen: View {
-    @EnvironmentObject private var state: AppState
+/// Placeholder for an empty detail pane. `ContentUnavailableView` is macOS 14+
+/// and this app supports macOS 13.
+struct EmptyDetail: View {
+    let symbol: String
+    let title: String
+    let message: String
 
     var body: some View {
-        GeometryReader { proxy in
-            let center = CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
-            let bindings = state.overviewBindings
-
-            ZStack {
-                DeviceIllustration(
-                    fingerCount: state.selectedBinding?.gesture.fingerCount ?? 0,
-                    showsClick: state.selectedBinding?.gesture.kind == .click
-                )
-                .frame(width: 168, height: 330)
-                .position(center)
-
-                ForEach(Array(bindings.enumerated()), id: \.element.id) { index, binding in
-                    let offset = Self.chipOffset(
-                        index: index,
-                        total: bindings.count,
-                        size: proxy.size
-                    )
-                    BindingChip(
-                        binding: binding,
-                        isSelected: state.selectedBindingID == binding.id
-                    ) {
-                        state.selectedBindingID = binding.id
-                    }
-                    .position(x: center.x + offset.x, y: center.y + offset.y)
-                }
-
-                if bindings.isEmpty {
-                    Text("No gestures yet — add one with +.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.secondaryText)
-                        .position(x: center.x, y: proxy.size.height - 40)
-                }
-            }
+        VStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
+            Text(title)
+                .font(.headline)
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-    }
-
-    /// Distributes chips around an ellipse, starting at the upper right and
-    /// going clockwise, skipping the very top and bottom so nothing lands on
-    /// the device's nose or tail.
-    static func chipOffset(index: Int, total: Int, size: CGSize) -> CGPoint {
-        guard total > 0 else { return .zero }
-
-        let radiusX = max(190, size.width * 0.33)
-        let radiusY = max(120, size.height * 0.32)
-
-        // Spread over 300° rather than 360° to leave the top clear.
-        let sweep = 300.0
-        let step = total == 1 ? 0 : sweep / Double(total - 1)
-        let angle = Angle(degrees: -150 + step * Double(index) + 90).radians
-
-        return CGPoint(
-            x: Darwin.cos(angle) * radiusX,
-            y: Darwin.sin(angle) * radiusY
-        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(40)
     }
 }
