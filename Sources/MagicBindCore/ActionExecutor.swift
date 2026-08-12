@@ -169,7 +169,11 @@ public final class ActionExecutor {
         }
 
         if let modifiers = action.modifiers {
-            let flags = CGEventFlags(rawValue: modifiers)
+            // Filter through `displayable` so a config recorded before the fn
+            // flag was excluded still posts a working shortcut.
+            let filtered = ShortcutModifiers(rawValue: modifiers)
+                .intersection(.displayable)
+            let flags = CGEventFlags(rawValue: filtered.rawValue)
             down.flags = flags
             up.flags = flags
         }

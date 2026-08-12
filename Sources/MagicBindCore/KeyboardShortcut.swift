@@ -23,11 +23,18 @@ public struct ShortcutModifiers: OptionSet, Hashable, Sendable {
     public static let help = ShortcutModifiers(rawValue: 0x0040_0000)
     public static let function = ShortcutModifiers(rawValue: 0x0080_0000)
 
-    /// The modifiers worth showing to the user and worth persisting. Notably
-    /// excludes `numericPad`, which the system sets on arrow keys and the
-    /// keypad as a side effect rather than as something the user held.
+    /// The modifiers worth showing to the user and worth persisting.
+    ///
+    /// Excludes two flags macOS sets as a side effect rather than because the
+    /// user held a key:
+    ///
+    /// - `numericPad`, set on arrow keys and the keypad.
+    /// - `function`, set on arrow keys and F-keys. Recording ⌃↑ for Mission
+    ///   Control captured `control + fn`, and posting `fn` back alongside the
+    ///   arrow key stopped the shortcut matching. The key code already implies
+    ///   fn for those keys, so carrying the flag is both redundant and harmful.
     public static let displayable: ShortcutModifiers = [
-        .capsLock, .control, .option, .shift, .command, .function
+        .capsLock, .control, .option, .shift, .command
     ]
 
     /// The glyph string for these modifiers, in the order Apple uses in menus:

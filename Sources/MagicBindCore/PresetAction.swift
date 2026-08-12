@@ -112,7 +112,12 @@ public enum PresetAction: String, Codable, CaseIterable, Sendable {
         case .applicationWindows:
             return (125, [.control])                  // ⌃↓
         case .showDesktop:
-            return (103, [.function])                 // fn F11
+            // Plain F11, with no fn flag. `fn` is deliberately never stored or
+            // posted anywhere in MagicBind — see ShortcutModifiers.displayable —
+            // because macOS sets it implicitly on F-keys and arrow keys, and
+            // posting it back breaks matching. If your F-keys act as media keys
+            // by default this may need remapping in System Settings.
+            return (103, [])
         case .desktopLeft:
             return (123, [.control])                  // ⌃←
         case .desktopRight:
