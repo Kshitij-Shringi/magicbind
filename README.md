@@ -5,16 +5,16 @@
 [![Platform: macOS 13+](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey.svg)](#requirements)
 [![Swift 5.9](https://img.shields.io/badge/swift-5.9-orange.svg)](https://swift.org)
 
-**An open-source gesture manager for the Apple Magic Mouse and Magic Trackpad.**
+**An open-source gesture manager for the Apple Magic Mouse, Magic Trackpad, and built-in trackpad.**
 Bind any N-finger tap, double tap, click, hold, or swipe to any action — a
 system action like Mission Control or Screen Capture, a keyboard shortcut you
 record by pressing it, launching an app, a shell command, or an AppleScript.
 
 > [!WARNING]
-> **MagicBind is pre-1.0 and unvalidated on real hardware.** The architecture is
-> in place and the logic is tested, but the recognizer thresholds are untested
-> guesses that need calibration against real hardware, and the reverse-engineered
-> `MTFinger` struct layout is unverified on your specific macOS version. See
+> **MagicBind is pre-1.0.** The pipeline works and the reverse-engineered
+> `MTFinger` layout has been confirmed against a real Magic Mouse on macOS 26,
+> but the recognizer thresholds are still estimates rather than measurements, and
+> the layout is unverified on other hardware and macOS versions. See
 > [Status](#status) before installing. Contributions very welcome.
 
 ## What this is
@@ -42,29 +42,30 @@ as much as a comparison — most rows are not built yet.
 | Physical button clicks | Remap left/right/middle | **Click** gestures per button, with or without fingers resting on the surface (opt-in) | ✅ v0.2 |
 | Config storage | Cloud-synced account | Local hand-editable JSON, git-friendly, syncable via any folder-sync tool | ✅ v0.1 |
 | Shortcut recording | Press a key to record it | Click the field, press the shortcut — rendered as ⇧⌘4, resolved against your keyboard layout | ✅ v0.1 |
-| Preferences UI | Polished, with animations | Options+-style dark UI: device illustration with bindings arranged around it, searchable Actions panel, directional gesture screen | ✅ v0.2 |
-| Pointer speed / acceleration | Sliders | Planned — [Phase 5][plan] | ❌ Planned |
-| Scroll direction & smooth scroll | Sliders and toggles | Planned — [Phase 5][plan] | ❌ Planned |
-| Per-app profiles | Auto-switching per app | Planned — [Phase 6][plan] | ❌ Planned |
-| Onboarding wizard | Guided first run | Planned — [Phase 7][plan] | ❌ Planned |
-| Auto-update | Built in | Planned, via Sparkle — [Phase 7][plan] | ❌ Planned |
-| Homebrew install | — | Planned — [Phase 7][plan] | ❌ Planned |
+| Preferences UI | Polished, with animations | Native sidebar-and-detail window listing every binding in one place, following your system light/dark appearance | ✅ v0.2 |
+| Multiple devices | One device per app instance | Every attached device recognized independently; enable per device, and scope each binding to the devices it should run on | ✅ v0.2 |
+| Pointer speed / acceleration | Sliders | Not built yet | ❌ Planned |
+| Scroll direction & smooth scroll | Sliders and toggles | Not built yet | ❌ Planned |
+| Per-app profiles | Auto-switching per app | Not built yet | ❌ Planned |
+| Onboarding wizard | Guided first run | Not built yet | ❌ Planned |
+| Auto-update | Built in | Not built yet; Sparkle is the likely route | ❌ Planned |
+| Homebrew install | — | Not built yet | ❌ Planned |
 | Telemetry | Collects usage data | **None, by design** | ✅ Never |
 | Price | Free, closed source, account-based | Free, MIT, no account | ✅ |
 
-[plan]: ProjectPlan.md
 
 ## How it works
 
 ```
 MultitouchReader    dlopen's Apple's private MultitouchSupport.framework,
-      |             emits raw touch frames
+      |             emits raw touch frames tagged with the device they came from
       v
 GestureRecognizer   turns frames into discrete tap / double tap / hold /
-      |             swipe GestureSpecs
+      |             swipe GestureSpecs — one recognizer per device, so two
+      |             devices can't corrupt each other's gesture sessions
       |             ← MouseButtonMonitor adds clicks (opt-in, listen-only tap)
       v
-GestureEngine       looks up a matching GestureBinding in ConfigStore
+GestureEngine       looks up a GestureBinding scoped to that device
       |
       v
 ActionExecutor      fires the action via CGEvent / NSWorkspace / AppleScript
@@ -75,7 +76,13 @@ Config lives in plain JSON at
 bindings, keep them in a dotfiles repo, or diff them.
 
 Out of the box: **3-finger tap → middle click**, and **4-finger tap →
-screenshot region** (⌘⇧4).
+screenshot region** (⌘⇧4), on the Magic Mouse only.
+
+**Trackpads are off by default.** macOS already binds three- and four-finger
+trackpad gestures to Mission Control, Look Up, and drag, so claiming them on
+install would break your machine. Turn a trackpad on in **Devices** when you
+want it, and note that MagicBind runs *in addition to* the system gesture rather
+than replacing it — prefer finger counts macOS leaves alone.
 
 ## Requirements
 
@@ -120,7 +127,7 @@ permission won't stick reliably, so gestures won't fire. Use the `.app`.
 
 </details>
 
-Homebrew cask and notarized releases are [Phase 7][plan].
+Homebrew cask and notarized releases are not built yet.
 
 ### Sharing a build with testers
 
@@ -183,7 +190,7 @@ gesture kind.
 - **The `MTFinger` struct layout is reverse-engineered.** It mirrors the
   commonly documented shape of Apple's private struct. If it's wrong for your
   macOS version, you'll get garbage coordinates. Validating this against real
-  frames is [Phase 2][plan] and the highest-value thing a contributor could do.
+  frames is the highest-value thing a contributor could do.
 - **Private frameworks break.** Apple can change or remove
   `MultitouchSupport.framework` symbols in any update, and historically has.
   MagicBind resolves them at runtime, so it degrades to "gestures stop working"
@@ -200,8 +207,6 @@ gesture kind.
 - **The device illustration is drawn, not photographed.** It's a vector
   approximation, because shipping Apple's product photography in an
   MIT-licensed repo isn't ours to do.
-
-The full phase-by-phase plan is in [ProjectPlan.md](ProjectPlan.md).
 
 ## Prior art and credits
 
@@ -234,8 +239,7 @@ steps, branch naming, Conventional Commits, and how review works.
 
 Fastest ways to help:
 
-1. **Validate the touch data on your Mac** ([Phase 2][plan]) — this unblocks
-   everything else.
+1. **Validate the touch data on your Mac** — this unblocks everything else.
 2. **Add SF Symbol icons per action type** to the bindings list.
 3. **Report what breaks** on your hardware and macOS version.
 

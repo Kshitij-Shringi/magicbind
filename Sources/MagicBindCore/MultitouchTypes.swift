@@ -5,8 +5,7 @@ import Foundation
 /// - Warning: The layout of every type in this file mirrors the
 ///   *reverse-engineered* shape of Apple's private multitouch API. It is not
 ///   published, not guaranteed stable across macOS releases, and not verified
-///   on every device. Validate against real frames (see Phase 2 of
-///   `ProjectPlan.md`) before trusting it.
+///   on every device. Validate against real frames before trusting it.
 public struct MTPoint: Equatable, Sendable {
     public var x: Float
     public var y: Float
@@ -33,7 +32,8 @@ public struct MTReadout: Equatable, Sendable {
 ///
 /// Raw values follow the commonly documented reverse-engineered enumeration.
 /// These are the values most likely to need correction after real-device
-/// validation — see `ProjectPlan.md` Phase 2.
+/// validation. Observed on a Magic Mouse: `state == 3` while a finger is in
+/// contact.
 public enum MTFingerState: Int32, Equatable, Sendable {
     case notTracking = 0
     case startInRange = 1

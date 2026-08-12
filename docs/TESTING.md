@@ -90,13 +90,15 @@ Defaults out of the box:
 | 3-finger tap | Middle click |
 | 4-finger tap | Screenshot region (⌘⇧4) |
 
-The window has three screens, via the icons at the top:
+The sidebar lists every binding, grouped by gesture kind. Select one and the
+detail pane shows three sections: **Gesture** (motion, finger count, button),
+**Action** (what it does), and **Runs On** (which devices). Underneath are
+**Devices**, **Tuning**, and **About**.
 
-- **Device** — every non-swipe binding as a chip around the mouse. Click a chip,
-  then pick an action from the panel on the right.
-- **Custom gestures** — swipes laid out by direction, one finger count at a
-  time. Click an "Unassigned" direction to bind it.
-- **Settings** — recognizer thresholds, and the mouse-button opt-in.
+**Trackpads are off by default.** Enable yours in **Devices** if you want to test
+that. Be warned: macOS already uses three- and four-finger trackpad gestures for
+Mission Control, Look Up, and drag, and MagicBind fires *in addition to* those
+rather than replacing them. Prefer finger counts macOS leaves alone.
 
 **Click gestures are off until you turn them on.** Settings → *Watch physical
 mouse buttons*. That installs a listen-only event tap;
@@ -111,14 +113,21 @@ Roughly in order of how much we'd learn:
 `MTFinger` memory layout is reverse-engineered from a private Apple framework
 and is unverified across macOS versions and hardware.
 
-Open the window and rest fingers on the mouse. Watch the **"Last: …"** readout in
-the bottom-right corner.
+Open the window and rest fingers on the mouse, then read the two counters in the
+status bar: **`frames N`** and **"Last: …"**. Between them they isolate the fault
+precisely.
 
-| What you see | What it means |
-|---|---|
-| Nothing, ever | The reader or the struct layout is wrong on your machine. **Most valuable bug report there is** — include your exact macOS version and Mac model. |
-| The wrong gesture | Threshold problem. Say which gesture you made and which appeared. |
-| The right gesture, but nothing happens | Permission or action problem, not recognition. |
+| `frames` | Last gesture | What it means |
+|---|---|---|
+| stays **0** | — | The reader is receiving nothing. **Most valuable bug report there is** — include your macOS version and Mac model. |
+| climbing | nothing appears | Frames arrive but nothing classifies — a threshold problem, or the `MTFinger` layout differs on your hardware. |
+| climbing | wrong gesture | Threshold problem. Say which gesture you made and which appeared. |
+| climbing | right gesture, nothing happens | Permission or action problem, not recognition. |
+
+> [!NOTE]
+> A single finger resting on the mouse while you move it currently registers as
+> `1-finger Hold` and `1-finger Swipe`. That's a known issue — one finger on a
+> mouse is just using the mouse. Bind 2+ fingers for now.
 
 **2. False triggers during normal use.** Browse and work normally for ten
 minutes with the defaults on. Does anything fire that you didn't intend? Resting
@@ -148,13 +157,28 @@ non-QWERTY, do the glyphs match the keys you actually pressed?
 **7. Intel Macs.** Universal builds are new and untested on x86_64. If you're on
 an Intel Mac, "it launched" is itself a useful report.
 
+**8. Multiple devices at once.** If you have both a Magic Mouse and a trackpad,
+this is newly supported and worth stressing:
+
+- Does the **Devices** page identify both correctly? It shows the family ID and
+  sensor dimensions used to classify each one — paste those if a device is
+  labelled wrong or shows an "unrecognized" badge.
+- With the trackpad enabled, does a gesture on one device ever fire while you're
+  touching the other? Each device gets its own recognizer specifically to prevent
+  that, and it's the kind of bug only real hardware finds.
+- Does **Runs On** work? Scope a binding to the mouse only, then make the same
+  gesture on the trackpad — it should do nothing.
+- **Known limitation:** click gestures can't be reliably attributed to a device.
+  `CGEvent` carries no device identity, so a click is credited to whichever
+  device last reported contact. Scoping a *click* to one device is best-effort;
+  taps, holds, and swipes are exact.
+
 ## Reporting
 
 File an issue: https://github.com/Kshitij-Shringi/magicbind/issues — the bug
 template asks for what's needed. Please include:
 
-- **The version and build.** In the app: menu bar → Open MagicBind… → Settings,
-  at the bottom. Or:
+- **The version and build.** In the app: menu bar → Open MagicBind… → About. Or:
   ```sh
   /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
     /Applications/MagicBind.app/Contents/Info.plist
@@ -162,10 +186,12 @@ template asks for what's needed. Please include:
     /Applications/MagicBind.app/Contents/Info.plist
   ```
 - **macOS version and Mac model** — `sw_vers` and Apple menu → About This Mac.
-- **Which device** — Magic Mouse, Magic Mouse 2, Magic Trackpad?
+- **Which device** — Magic Mouse, Magic Mouse 2, Magic Trackpad, built-in? If
+  more than one is attached, say which you were touching, and paste what the
+  **Devices** page shows for each.
 - **What the "Last: …" readout showed** when the problem happened. This is the
   single most diagnostic detail; see the table above.
-- **Your bindings**, if relevant. Settings → Reveal in Finder, or:
+- **Your bindings**, if relevant. About → Reveal in Finder, or:
   ```sh
   cat ~/Library/"Application Support"/MagicBind/config.json
   ```
@@ -199,5 +225,4 @@ zip with `ditto` (so the signature survives), and writes a checksum. It prints a
 
 The friction in Option B goes away entirely with an Apple Developer Program
 membership: sign with a Developer ID, run `xcrun notarytool submit --wait`, then
-`xcrun stapler staple`, and testers just double-click. That's
-[Phase 7](../ProjectPlan.md).
+`xcrun stapler staple`, and testers just double-click.

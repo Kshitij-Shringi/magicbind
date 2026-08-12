@@ -12,6 +12,128 @@ to the configuration format. Any such change ships with a migration path in
 
 ## [Unreleased]
 
+### Fixed — gestures never worked at all
+
+- **The touch reader leaked its devices and received nothing.**
+  `MTDeviceCreateList` follows the Create rule, so the returned array *owns* the
+  device objects — but it was a local variable in `MultitouchReader.start()`,
+  released the moment that method returned. The devices were deallocated while
+  `deviceRefs` still held raw pointers into them, so the contact-frame callback
+  was registered against freed objects and never fired.
+
+  The symptom was maximally misleading: `dlopen` succeeds, every symbol resolves,
+  `MTDeviceStart` succeeds, `MTDeviceIsRunning` returns `true`, the framework
+  prints its own device-recognition lines — and zero frames arrive, silently.
+  This was present in the very first version of the reader, which means gestures
+  have never worked in any build.
+
+  The array is now held for the reader's lifetime and each device is retained
+  individually, with both released in `stopReading()`. Verified against real
+  hardware: 306 frames and 291 with fingers in a 15-second controlled run.
+
+- **`fn` was being recorded into shortcuts and posted back.** macOS sets the
+  `function` flag on arrow keys and F-keys whether or not the user pressed fn.
+  Recording ⌃↑ for Mission Control stored `control + fn`, and posting fn back
+  alongside the arrow key stopped the shortcut matching. `fn` is now excluded
+  from `ShortcutModifiers.displayable`, and `ActionExecutor` filters modifiers
+  through it when posting, so configs recorded before this fix are repaired
+  without re-recording. `showDesktop` moved from `fn+F11` to plain F11 as a
+  consequence.
+
+- **Switching an action's type left the old parameters behind.** A binding
+  changed from Keyboard Shortcut to Middle Click kept its `keyCode` and
+  `modifiers` in the JSON — inert at runtime, but confusing in a file people are
+  invited to hand-edit. `ActionConfig.switchingType(to:)` now keeps only the
+  parameters the new type uses, while re-selecting the same type stays a no-op so
+  a just-recorded shortcut survives.
+
+### Added — reader diagnostics
+
+- **A `frames` counter in the status bar**, orange while zero. Distinguishing
+  "the reader is dead" from "a threshold is wrong" previously required attaching
+  a debugger; it is now visible at a glance, and it is the first thing to check
+  when a gesture doesn't fire.
+
+### Verified against real hardware
+
+First real-device validation, on a Magic Mouse and a built-in trackpad under
+macOS 26.4:
+
+- **The reverse-engineered `MTFinger` layout is correct** — `state=3` on contact,
+  normalized position `(0.7103, 0.6803)`, size `0.875`. This was the project's
+  largest open question.
+- **Device classification is correct** — family 112 external → Magic Mouse,
+  family 106 built-in → Built-in Trackpad.
+- **Known issue not yet addressed:** a single finger resting on the mouse while
+  you move it produces continuous `1-finger Hold` and `1-finger Swipe`
+  recognitions. One finger on a mouse is just *using* the mouse, so single-finger
+  gestures need either a minimum finger count or to be off by default.
+
+### Changed — the window was rebuilt again
+
+The Options+-style window shipped earlier in this cycle was confusing, and was
+replaced rather than patched. What was wrong with it, and what replaced it:
+
+- **Binding chips floated around a picture of the mouse.** Their position carried
+  no information: Logi Options+ points each label at a real physical button, and
+  the Magic Mouse has no buttons to point at, so the spatial metaphor was
+  decorative and misleading. The device illustration is gone.
+- **Bindings were split across two screens** — taps, holds and clicks on one,
+  swipes on another — with nothing on either screen indicating the other
+  existed. There is now **one sidebar listing every binding**, grouped by gesture
+  kind with counts, and searchable.
+- **The theme was hardcoded dark**, ignoring system appearance and looking
+  foreign next to other Mac apps. The window now uses semantic colours and
+  follows light/dark automatically.
+- **A panel titled "Actions" also contained the gesture pickers**, mixing "which
+  gesture" with "what it does". The detail pane now has three clearly separated
+  sections: **Gesture**, **Action**, and **Runs On**.
+- Settings moved into their own sidebar entries (Devices, Tuning, About) instead
+  of hiding behind an unlabelled toolbar icon.
+- The detail pane warns when another enabled binding claims the same gesture on
+  an overlapping device, since only the first match ever runs.
+
+### Added — multiple devices, including trackpads
+
+- **Per-device enable switches.** A **Devices** page lists every attached
+  multitouch device with the family ID, built-in flag, and sensor dimensions used
+  to identify it — worth quoting if a device is misclassified. Devices that
+  aren't attached can be configured ahead of time.
+- **Per-binding device scope.** Each binding has a **Runs On** section, so a
+  4-finger tap can be Magic Mouse only while a swipe works on the trackpad too.
+  The same gesture can even do different things on different devices. Switching a
+  device off in Devices overrides every per-binding scope.
+- **Device identification** via `MTDeviceGetDeviceID`, `MTDeviceGetFamilyID`,
+  `MTDeviceIsBuiltIn` and `MTDeviceGetSensorSurfaceDimensions`. Each accessor is
+  resolved individually and tolerated as missing, so losing one to a macOS update
+  degrades classification rather than breaking gestures. Unknown devices fall
+  back to a surface-aspect heuristic — a mouse surface is taller than wide, a
+  trackpad wider than tall — rather than being ignored.
+- **Trackpads default to off.** macOS already binds three- and four-finger
+  trackpad gestures to Mission Control, Look Up, and drag; claiming those on
+  install would break the machine for anyone who tried this. Enabling a trackpad
+  also does **not** suppress the system gesture — both fire — which the Devices
+  page says plainly.
+
+### Fixed — devices were being confused for each other
+
+- **Frames from different devices were fed into one shared recognizer.** On a Mac
+  with both a Magic Mouse and a trackpad, the two devices interleave frames, so
+  one device's touches could start a gesture session the other device's touches
+  then finished — producing gestures nobody made. There is now **one recognizer
+  per device**, and each frame is tagged with its source.
+- **Trackpad gestures fired bindings whether you wanted them to or not.** Every
+  device was started and the callback ignored which device sent the frame, so a
+  3-finger tap on a laptop trackpad triggered the middle-click binding silently.
+  Devices are now opt-in.
+
+### Known limitation
+
+- **Click gestures can't be reliably attributed to a device.** `CGEvent` carries
+  no device identity, so a click is attributed to whichever device last reported
+  contact, falling back to the first non-trackpad device. Scoping a click binding
+  to a specific device is therefore best-effort.
+
 ### Added — sharing test builds
 
 - **Universal builds.** `./Scripts/build_app.sh --universal` produces an
@@ -132,9 +254,7 @@ to the configuration format. Any such change ships with a migration path in
   capture the next keypress into the newly selected binding. The editor is now
   keyed by binding identity, so switching selection tears down the recorder.
 
-See [ProjectPlan.md](ProjectPlan.md) for what's planned next — Phase 2,
-validating the reverse-engineered touch data against real hardware, is still
-the highest-value work.
+The parity table in README.md tracks what's built and what isn't.
 
 ## [0.1.0] - 2026-08-10
 
@@ -211,16 +331,15 @@ as a foundation to build on, not a release to rely on.
 ### Known limitations
 
 - Recognizer thresholds are unvalidated estimates, not measurements. Expect
-  false triggers and missed gestures until [Phase 2/3][plan] calibration.
+  false triggers and missed gestures until they're calibrated.
 - The `MTFinger` struct layout is reverse-engineered and unverified across macOS
   versions. A wrong layout produces garbage coordinates.
 - Keyboard shortcut bindings require raw virtual key codes; there is no live
   "press a key to record" capture yet.
 - No per-app profiles, pointer/scroll settings, auto-update, or notarized
-  release. See [ProjectPlan.md][plan].
+  release.
 - Not sandboxed, by necessity — no Mac App Store distribution.
 
-[plan]: ProjectPlan.md
 
 [Unreleased]: https://github.com/Kshitij-Shringi/magicbind/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Kshitij-Shringi/magicbind/releases/tag/v0.1.0

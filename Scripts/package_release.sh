@@ -8,8 +8,7 @@
 # the tester's machine and they'll have to clear the quarantine flag by hand.
 # docs/TESTING.md walks them through it. If you get an Apple Developer Program
 # membership, replace the ad-hoc signing in build_app.sh with a Developer ID
-# signature plus `xcrun notarytool submit` and this friction disappears — see
-# ProjectPlan.md Phase 7.
+# signature plus `xcrun notarytool submit` and this friction disappears.
 set -e
 
 cd "$(dirname "$0")/.."
