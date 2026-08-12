@@ -177,10 +177,45 @@ public struct ActionConfig: Codable, Hashable, Sendable {
         self.type = type
         self.preset = preset
         self.keyCode = keyCode
+        // Note: parameters are stored as given. Use `switchingType(to:)` when
+        // changing an existing action's type, which drops the parameters that no
+        // longer apply.
         self.modifiers = modifiers
         self.bundleIdentifier = bundleIdentifier
         self.command = command
         self.script = script
+    }
+}
+
+public extension ActionConfig {
+    /// This action with its type changed, keeping only the parameters the new
+    /// type actually uses.
+    ///
+    /// Without this, switching a binding from Keyboard Shortcut to Middle Click
+    /// left the recorded `keyCode` and `modifiers` behind in the JSON — inert at
+    /// runtime, but confusing in a file people are invited to hand-edit, and it
+    /// made an action look configured when it wasn't. Re-selecting the *same*
+    /// type is a no-op, so the shortcut you just recorded survives.
+    func switchingType(to newType: ActionType) -> ActionConfig {
+        guard newType != type else { return self }
+
+        var result = ActionConfig(type: newType)
+        switch newType {
+        case .keyboardShortcut:
+            result.keyCode = keyCode
+            result.modifiers = modifiers
+        case .preset:
+            result.preset = preset
+        case .launchApp:
+            result.bundleIdentifier = bundleIdentifier
+        case .shellCommand:
+            result.command = command
+        case .appleScript:
+            result.script = script
+        case .middleClick:
+            break
+        }
+        return result
     }
 }
 
@@ -191,24 +226,37 @@ public struct GestureBinding: Codable, Hashable, Identifiable, Sendable {
     public var action: ActionConfig
     public var isEnabled: Bool
 
+    /// Which device kinds this binding runs on. `nil` means every enabled
+    /// device — which is what configs written before per-device scoping decode
+    /// as, so they keep working unchanged.
+    public var deviceKinds: Set<DeviceKind>?
+
     public init(
         id: UUID = UUID(),
         gesture: GestureSpec,
         action: ActionConfig,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        deviceKinds: Set<DeviceKind>? = nil
     ) {
         self.id = id
         self.gesture = gesture
         self.action = action
         self.isEnabled = isEnabled
+        self.deviceKinds = deviceKinds
+    }
+
+    /// Whether this binding applies to a device kind.
+    public func appliesTo(_ kind: DeviceKind) -> Bool {
+        guard let deviceKinds else { return true }
+        return deviceKinds.contains(kind)
     }
 }
 
 /// Tuning constants for `GestureRecognizer`.
 ///
-/// - Important: These defaults are untested guesses. They need real-device
-///   calibration — that is the entire point of Phase 2/3 in `ProjectPlan.md`.
-///   They live in the config so they can be tuned without a rebuild.
+/// - Important: These defaults are estimates, not measurements. They need
+///   real-device calibration, which is why they live in the config and are
+///   exposed in the UI — they can be tuned without a rebuild.
 public struct RecognizerTuning: Codable, Hashable, Sendable {
     /// Longest contact that can still count as a tap, in seconds.
     public var tapMaxDuration: Double
@@ -274,6 +322,10 @@ public struct AppConfig: Codable, Hashable, Sendable {
         mouseClicksEnabled ?? false
     }
 
+    /// Which device kinds gestures are accepted from. `nil` selects the
+    /// defaults described by `isDeviceEnabled(_:)`.
+    public var enabledDeviceKinds: Set<DeviceKind>?
+
     public var tuning: RecognizerTuning
 
     public var bindings: [GestureBinding]
@@ -284,18 +336,61 @@ public struct AppConfig: Codable, Hashable, Sendable {
         version: Int = AppConfig.currentVersion,
         isEnabled: Bool = true,
         mouseClicksEnabled: Bool? = false,
+        enabledDeviceKinds: Set<DeviceKind>? = nil,
         tuning: RecognizerTuning = .default,
         bindings: [GestureBinding] = []
     ) {
         self.version = version
         self.isEnabled = isEnabled
         self.mouseClicksEnabled = mouseClicksEnabled
+        self.enabledDeviceKinds = enabledDeviceKinds
         self.tuning = tuning
         self.bindings = bindings
     }
 
-    /// Looks up the first enabled binding matching a recognized gesture.
+    /// Looks up the first enabled binding matching a recognized gesture,
+    /// ignoring which device produced it.
     public func binding(for gesture: GestureSpec) -> GestureBinding? {
         bindings.first { $0.isEnabled && $0.gesture == gesture }
+    }
+
+    /// Looks up the binding for a gesture from a specific device.
+    ///
+    /// Returns `nil` if the device kind is switched off entirely, so disabling
+    /// a device is a single decision that overrides every per-binding scope.
+    public func binding(for gesture: GestureSpec, on kind: DeviceKind) -> GestureBinding? {
+        guard isDeviceEnabled(kind) else { return nil }
+        return bindings.first {
+            $0.isEnabled && $0.gesture == gesture && $0.appliesTo(kind)
+        }
+    }
+
+    /// Whether gestures from a device kind are acted on at all.
+    ///
+    /// Defaults are deliberately asymmetric. A Magic Mouse or Magic Trackpad is
+    /// something you bought to get more gestures, so it's on. A built-in
+    /// trackpad already has macOS's own three- and four-finger gestures bound to
+    /// Mission Control, Look Up, and drag — hijacking those by default would
+    /// break the machine for anyone who installs this, so it's off until asked.
+    public func isDeviceEnabled(_ kind: DeviceKind) -> Bool {
+        if let enabledDeviceKinds {
+            return enabledDeviceKinds.contains(kind)
+        }
+        return !kind.isTrackpad
+    }
+
+    /// The device kinds acted on, resolving the default when unset.
+    public var effectiveEnabledDeviceKinds: Set<DeviceKind> {
+        enabledDeviceKinds ?? Set(DeviceKind.allCases.filter { !$0.isTrackpad })
+    }
+
+    public mutating func setDeviceEnabled(_ kind: DeviceKind, _ isEnabled: Bool) {
+        var kinds = effectiveEnabledDeviceKinds
+        if isEnabled {
+            kinds.insert(kind)
+        } else {
+            kinds.remove(kind)
+        }
+        enabledDeviceKinds = kinds
     }
 }
