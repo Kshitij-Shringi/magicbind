@@ -35,6 +35,9 @@ struct SidebarView: View {
                     .tag(Selection.devices)
                 Label("Tuning", systemImage: "slider.horizontal.3")
                     .tag(Selection.tuning)
+                Label("Permissions", systemImage: "lock.shield")
+                    .badge(state.isAccessibilityTrusted ? nil : "!")
+                    .tag(Selection.permissions)
                 Label("About", systemImage: "info.circle")
                     .tag(Selection.about)
             }

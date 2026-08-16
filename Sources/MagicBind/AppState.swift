@@ -44,6 +44,14 @@ final class AppState: ObservableObject {
     @Published private(set) var isEngineRunning = false
     @Published private(set) var isWatchingMouseButtons = false
 
+    /// Whether the app holds Accessibility permission.
+    ///
+    /// Distinct from Input Monitoring, and the distinction bites: touch frames
+    /// and click detection use listen-only taps and need only Input Monitoring,
+    /// so gestures can be recognized perfectly while every action silently
+    /// fails and reserved shortcuts can't be recorded.
+    @Published private(set) var isAccessibilityTrusted = ActionExecutor.isAccessibilityTrusted
+
     /// Touch frames delivered so far, polled for the status bar. Zero while you
     /// are touching the device means the reader is dead — a completely different
     /// problem from a mis-tuned threshold, and worth being able to see at once.
@@ -114,6 +122,13 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 let latest = self.engine.frameCount
                 if latest != self.frameCount { self.frameCount = latest }
+
+                let trusted = ActionExecutor.isAccessibilityTrusted
+                if trusted != self.isAccessibilityTrusted {
+                    self.isAccessibilityTrusted = trusted
+                    // Clear the stale complaint the moment permission appears.
+                    if trusted { self.lastErrorMessage = nil }
+                }
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -307,8 +322,20 @@ final class AppState: ObservableObject {
         return left.intersection(right).filter { config.isDeviceEnabled($0) }
     }
 
-    // MARK: - Config file
+    private func persist() {
+        do {
+            try store.update(config)
+            engine.reloadTuning()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+}
 
+// MARK: - Permissions and config file
+
+@MainActor
+extension AppState {
     var configPath: String {
         store.fileURL.path
     }
@@ -331,6 +358,34 @@ final class AppState: ObservableObject {
         return "\(version) (build \(build), \(sha))"
     }
 
+    /// Opens System Settings directly at the Accessibility list.
+    func openAccessibilitySettings() {
+        let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        )
+        guard let url else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Re-asks the system, and re-triggers the prompt if it hasn't been shown.
+    func recheckAccessibility() {
+        if !ActionExecutor.isAccessibilityTrusted {
+            ActionExecutor.requestAccessibilityPermission()
+        }
+        isAccessibilityTrusted = ActionExecutor.isAccessibilityTrusted
+        if isAccessibilityTrusted { lastErrorMessage = nil }
+    }
+
+    /// Relaunches the app, which is what actually makes a fresh grant stick.
+    func relaunch() {
+        let url = Bundle.main.bundleURL
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+    }
+
     func revealConfigInFinder() {
         // Save first: revealing a file that doesn't exist yet just opens the
         // enclosing folder and looks broken.
@@ -342,12 +397,4 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func persist() {
-        do {
-            try store.update(config)
-            engine.reloadTuning()
-        } catch {
-            lastErrorMessage = error.localizedDescription
-        }
-    }
 }

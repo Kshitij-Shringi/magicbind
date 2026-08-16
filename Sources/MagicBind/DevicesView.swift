@@ -143,3 +143,97 @@ struct AboutView: View {
         .navigationTitle("About")
     }
 }
+
+/// The Permissions page: what MagicBind needs, whether it has it, and why.
+///
+/// This is where the explanation lives. The top-of-window banner is one line by
+/// design — a wrapping paragraph up there fought with the rest of the layout.
+struct PermissionsView: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Accessibility") {
+                    StatusPill(isOK: state.isAccessibilityTrusted)
+                }
+                Text(
+                    """
+                    Needed to post clicks and keystrokes, and to record shortcuts \
+                    that macOS reserves — ⌘⇧4 and similar. Without it gestures are \
+                    still recognized, so the app looks like it is working while \
+                    nothing actually happens.
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Button("Open Accessibility Settings") {
+                        state.openAccessibilitySettings()
+                    }
+                    Button("Re-check") { state.recheckAccessibility() }
+                    Button("Relaunch MagicBind") { state.relaunch() }
+                }
+            } header: {
+                Text("Required")
+            }
+
+            Section {
+                LabeledContent("Touch frames received") {
+                    Text("\(state.frameCount)")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(state.frameCount == 0 ? .orange : .secondary)
+                }
+                LabeledContent("Watching mouse buttons") {
+                    StatusPill(isOK: state.isWatchingMouseButtons)
+                }
+                Text(
+                    """
+                    Reading touch data and watching mouse buttons use listen-only \
+                    taps, which need Input Monitoring rather than Accessibility. \
+                    That is why gesture detection can work perfectly while every \
+                    action fails.
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Input Monitoring")
+            }
+
+            Section {
+                Callout(
+                    style: .warning,
+                    text: """
+                        Ad-hoc signed builds get a new identity every time they \
+                        are rebuilt, so macOS drops the Accessibility grant on \
+                        each rebuild. Run Scripts/create_signing_identity.sh once \
+                        to give the app a stable signature and stop that.
+                        """
+                )
+            } header: {
+                Text("If permission keeps disappearing")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Permissions")
+    }
+}
+
+/// A granted / missing indicator.
+struct StatusPill: View {
+    let isOK: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: isOK ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(isOK ? .green : .orange)
+            Text(isOK ? "Granted" : "Missing")
+                .foregroundStyle(.secondary)
+        }
+        .font(.callout)
+    }
+}

@@ -6,6 +6,7 @@ enum Selection: Hashable {
     case binding(GestureBinding.ID)
     case devices
     case tuning
+    case permissions
     case about
 }
 
@@ -20,6 +21,23 @@ struct MainWindowView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
+        // A plain VStack, not `safeAreaInset`. Applying a top inset to a
+        // NavigationSplitView doesn't inset the window — it overlays each
+        // column, so the banner drew on top of the sidebar's search field and
+        // rows. Stacking the banner above the split view is what actually gives
+        // it its own full-width strip.
+        VStack(spacing: 0) {
+            if !state.isAccessibilityTrusted {
+                AccessibilityBanner()
+                Divider()
+            }
+            splitView
+            Divider()
+            StatusBar()
+        }
+    }
+
+    private var splitView: some View {
         NavigationSplitView {
             SidebarView()
                 .navigationSplitViewColumnWidth(
@@ -49,9 +67,6 @@ struct MainWindowView: View {
                 .help("Remove the selected gesture")
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            StatusBar()
-        }
     }
 
     @ViewBuilder
@@ -74,6 +89,8 @@ struct MainWindowView: View {
             DevicesView()
         case .tuning:
             TuningView()
+        case .permissions:
+            PermissionsView()
         case .about:
             AboutView()
         case .none:
@@ -83,6 +100,42 @@ struct MainWindowView: View {
                 message: "Pick a gesture in the sidebar, or add one with +."
             )
         }
+    }
+}
+
+/// A single-line notice shown across the top whenever Accessibility is missing.
+///
+/// Deliberately one line. The first version stacked a wrapping paragraph and
+/// three buttons into a `safeAreaInset`, which overlapped the sidebar and
+/// itself. The detail belongs in the Permissions page, not in a strip that has
+/// to coexist with the rest of the window.
+struct AccessibilityBanner: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.callout)
+
+            Text("Accessibility permission missing — actions won\u{2019}t fire.")
+                .font(.callout)
+                .lineLimit(1)
+
+            Button("Details") { state.selection = .permissions }
+                .buttonStyle(.link)
+                .font(.callout)
+
+            Spacer(minLength: 8)
+
+            Button("Open Settings") { state.openAccessibilitySettings() }
+            Button("Re-check") { state.recheckAccessibility() }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(.orange.opacity(0.12))
     }
 }
 
