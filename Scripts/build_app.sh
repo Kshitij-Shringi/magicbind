@@ -54,11 +54,27 @@ PLIST="$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$PLIST"
 /usr/libexec/PlistBuddy -c "Add :MagicBindGitSHA string $GIT_SHA" "$PLIST"
 
-echo "==> Ad-hoc signing..."
-# Ad-hoc is fine for a build you run yourself. It is NOT fine for handing to
-# someone else: Gatekeeper rejects it on download and they have to override it
-# manually. See docs/TESTING.md and SECURITY.md.
-codesign --force --deep --sign - "$APP"
+# A stable signing identity matters more than it looks. TCC keys the
+# Accessibility grant on the code signature, and an ad-hoc signature changes
+# with every build — so each rebuild silently loses the permission, and the app
+# then recognizes gestures perfectly while every action does nothing.
+#
+# Run ./Scripts/create_signing_identity.sh once and this picks it up.
+IDENTITY="${MAGICBIND_SIGN_IDENTITY:-}"
+if [[ -z "$IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null \
+     | grep -q "MagicBind Local Signing"; then
+  IDENTITY="MagicBind Local Signing"
+fi
+
+if [[ -n "$IDENTITY" ]]; then
+  echo "==> Signing with '$IDENTITY' (stable identity, permissions persist)..."
+  codesign --force --deep --sign "$IDENTITY" "$APP"
+else
+  echo "==> Ad-hoc signing..."
+  echo "    NOTE: Accessibility permission will be lost on every rebuild."
+  echo "    Run ./Scripts/create_signing_identity.sh once to stop that."
+  codesign --force --deep --sign - "$APP"
+fi
 
 echo "==> Done: $APP"
 echo "    version $VERSION ($GIT_SHA), arch: $(lipo -archs "$APP/Contents/MacOS/MagicBind")"
