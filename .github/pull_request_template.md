@@ -59,7 +59,7 @@ tried):
 
 - [ ] **`GestureRecognizer` thresholds** — I measured this on real hardware and
       the PR says which device, macOS version, and gesture. (Numbers in that
-      file need a story; see ProjectPlan.md Phase 2/3.)
+      file need a story.)
 - [ ] **`MultitouchTypes` struct layout** — I verified against real frames, and
       described what I observed.
 - [ ] **`ActionExecutor`** — this still only *posts* events and never installs a

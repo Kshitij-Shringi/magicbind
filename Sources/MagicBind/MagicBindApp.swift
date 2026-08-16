@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Menu-bar-only entry point. `LSUIElement` in `Resources/Info.plist` keeps it
 /// out of the Dock, so the menu bar item is the whole UI surface until the
-/// preferences window is opened.
+/// main window is opened.
 @main
 struct MagicBindApp: App {
     @StateObject private var state = AppState.shared
@@ -16,17 +16,17 @@ struct MagicBindApp: App {
                 .environmentObject(state)
         }
 
-        Window("MagicBind Preferences", id: WindowID.preferences) {
-            PreferencesView()
+        Window("MagicBind", id: WindowID.main) {
+            MainWindowView()
                 .environmentObject(state)
-                .frame(minWidth: 560, minHeight: 420)
+                .frame(minWidth: 1020, minHeight: 640)
         }
         .windowResizability(.contentMinSize)
     }
 }
 
 enum WindowID {
-    static let preferences = "preferences"
+    static let main = "main"
 }
 
 /// The menu bar dropdown.
@@ -41,8 +41,8 @@ struct MenuBarContent: View {
 
         Divider()
 
-        Button("Preferences…") {
-            openWindow(id: WindowID.preferences)
+        Button("Open MagicBind…") {
+            openWindow(id: WindowID.main)
             NSApp.activate(ignoringOtherApps: true)
         }
         .keyboardShortcut(",", modifiers: .command)

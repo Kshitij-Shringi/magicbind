@@ -1,3 +1,6 @@
+# Local planning notes — deliberately not tracked
+ProjectPlan.md
+
 # SwiftPM
 .build/
 .swiftpm/
@@ -5,6 +8,9 @@ Package.resolved
 
 # Build output from Scripts/build_app.sh
 build/
+
+# Packaged test builds from Scripts/package_release.sh
+dist/
 
 # Xcode
 *.xcodeproj/

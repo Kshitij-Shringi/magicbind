@@ -5,11 +5,13 @@
     <key>CFBundleName</key>
     <string>MagicBind</string>
     <key>CFBundleIdentifier</key>
-    <string>com.example.magicbind</string>
+    <string>io.github.kshitij-shringi.magicbind</string>
+    <!-- Both are overwritten by Scripts/build_app.sh from the VERSION file
+         and the git history; the literals here are only a fallback. -->
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>0</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>0.0.0</string>
     <key>CFBundleExecutable</key>
     <string>MagicBind</string>
     <key>CFBundlePackageType</key>
@@ -21,6 +23,6 @@
     <key>NSAppleEventsUsageDescription</key>
     <string>MagicBind runs AppleScript actions you configure for gesture bindings.</string>
     <key>NSHumanReadableCopyright</key>
-    <string>Open source, MIT licensed.</string>
+    <string>MIT licensed. https://github.com/Kshitij-Shringi/magicbind</string>
 </dict>
 </plist>

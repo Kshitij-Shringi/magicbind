@@ -58,12 +58,72 @@ public final class ActionExecutor {
             try postMiddleClick()
         case .keyboardShortcut:
             try postKeyboardShortcut(action)
+        case .preset:
+            try runPreset(action)
         case .launchApp:
             try launchApp(action)
         case .shellCommand:
             try runShellCommand(action)
         case .appleScript:
             try runAppleScript(action)
+        }
+    }
+
+    /// Runs a named system action. Most are a keyboard shortcut with a friendly
+    /// name; the volume presets are media keys, which take a different path.
+    private func runPreset(_ action: ActionConfig) throws {
+        guard let preset = action.preset else {
+            throw ExecutionError.missingParameter("system action")
+        }
+
+        if let mediaKey = preset.mediaKey {
+            try postMediaKey(mediaKey)
+            return
+        }
+
+        guard let shortcut = preset.shortcut else {
+            throw ExecutionError.missingParameter("shortcut for \(preset.displayName)")
+        }
+
+        try postKeyboardShortcut(
+            ActionConfig(
+                type: .keyboardShortcut,
+                keyCode: shortcut.keyCode,
+                modifiers: shortcut.modifiers.rawValue
+            )
+        )
+    }
+
+    /// Posts a volume or mute media key.
+    ///
+    /// These aren't virtual key codes — macOS delivers them as `systemDefined`
+    /// events with the key packed into `data1`, which is why they can't reuse
+    /// the keyboard path.
+    private func postMediaKey(_ key: Int32) throws {
+        guard Self.isAccessibilityTrusted else { throw ExecutionError.accessibilityNotTrusted }
+
+        for isDown in [true, false] {
+            let state = isDown ? 0x0A : 0x0B
+            let data1 = Int((key << 16) | Int32(state << 8))
+
+            guard
+                let event = NSEvent.otherEvent(
+                    with: .systemDefined,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: 0,
+                    windowNumber: 0,
+                    context: nil,
+                    subtype: 8,  // NX_SUBTYPE_AUX_CONTROL_BUTTONS
+                    data1: data1,
+                    data2: -1
+                ),
+                let cgEvent = event.cgEvent
+            else {
+                throw ExecutionError.eventCreationFailed
+            }
+
+            cgEvent.post(tap: .cghidEventTap)
         }
     }
 
@@ -109,7 +169,11 @@ public final class ActionExecutor {
         }
 
         if let modifiers = action.modifiers {
-            let flags = CGEventFlags(rawValue: modifiers)
+            // Filter through `displayable` so a config recorded before the fn
+            // flag was excluded still posts a working shortcut.
+            let filtered = ShortcutModifiers(rawValue: modifiers)
+                .intersection(.displayable)
+            let flags = CGEventFlags(rawValue: filtered.rawValue)
             down.flags = flags
             up.flags = flags
         }

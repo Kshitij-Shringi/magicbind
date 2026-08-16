@@ -243,8 +243,7 @@ chore: bump swiftlint to 0.57
 
 - Behavior changes to `GestureRecognizer` or `ConfigStore` with no test.
 - Recognizer threshold changes with no explanation of what device and gesture
-  you measured. Numbers in that file need a story — see
-  [ProjectPlan.md](ProjectPlan.md) Phase 2/3.
+  you measured. Numbers in that file need a story.
 - New dependencies. This app has none on purpose. Bringing one in needs a
   reason that outweighs the cost of auditing it in something that holds
   Accessibility permission.
@@ -267,10 +266,15 @@ ActionExecutor     fires the action via CGEvent / NSWorkspace / AppleScript
 | File | Responsibility |
 |---|---|
 | [MultitouchTypes.swift](Sources/MagicBindCore/MultitouchTypes.swift) | Reverse-engineered `MTFinger` / `MTPoint` layout. **Change carefully.** |
-| [MultitouchReader.swift](Sources/MagicBindCore/MultitouchReader.swift) | Runtime binding to `MultitouchSupport.framework`. |
+| [MultitouchReader.swift](Sources/MagicBindCore/MultitouchReader.swift) | Runtime binding to `MultitouchSupport.framework`; identifies devices and tags each frame with its source. |
+| [MultitouchDevice.swift](Sources/MagicBindCore/MultitouchDevice.swift) | `DeviceKind`, `MTDeviceInfo`, and the device classifier. Pure logic, fully testable. |
 | [GestureRecognizer.swift](Sources/MagicBindCore/GestureRecognizer.swift) | Frames → gestures. Pure logic, fully testable. |
 | [Models.swift](Sources/MagicBindCore/Models.swift) | `GestureSpec`, `GestureBinding`, `ActionConfig`, `AppConfig`. |
 | [ConfigStore.swift](Sources/MagicBindCore/ConfigStore.swift) | JSON persistence and migration. |
+| [KeyboardShortcut.swift](Sources/MagicBindCore/KeyboardShortcut.swift) | `ShortcutModifiers` + layout-aware shortcut formatting. Raw values must stay in sync with `CGEventFlags`. |
+| [PresetAction.swift](Sources/MagicBindCore/PresetAction.swift) | The 20 named system actions and the shortcut or media key each sends. |
+| [ActionCatalog.swift](Sources/MagicBindCore/ActionCatalog.swift) | What the Actions panel lists, and its search. Kept in Core so it's testable. |
+| [MouseButtonMonitor.swift](Sources/MagicBindCore/MouseButtonMonitor.swift) | Listen-only `CGEvent` tap for physical buttons. **Read SECURITY.md before touching this.** |
 | [ActionExecutor.swift](Sources/MagicBindCore/ActionExecutor.swift) | The only file that posts `CGEvent`s. |
 | [GestureEngine.swift](Sources/MagicBindCore/GestureEngine.swift) | Wires the pipeline together. |
 | [Sources/MagicBind/](Sources/MagicBind/) | Menu bar app and SwiftUI preferences. |
@@ -282,16 +286,23 @@ Two rules worth internalizing:
 - **`GestureRecognizer` must stay free of wall-clock time and of the private
   framework.** It takes timestamps as parameters. That constraint is what makes
   it testable — don't reach for `Date()` inside it.
+- **One recognizer per device.** `GestureEngine` keys recognizers by device ID
+  because a Mac with two multitouch devices interleaves their frames; sharing a
+  recognizer lets one device finish another's gesture session.
+- **The mouse button tap stays `.listenOnly`.** Changing it to an active tap
+  would let MagicBind modify or swallow clicks, which contradicts what
+  SECURITY.md promises users. If you think you need that, open an issue first.
 
-Where the project is headed, phase by phase, is in
-[ProjectPlan.md](ProjectPlan.md). Reading Phase 2 and 3 will save you from
-proposing recognizer tuning that's already planned.
+Where the project is headed is summarized in the parity table in
+[README.md](README.md), which marks what's built and what's planned.
 
 ## Good first contributions
 
-- **Live keyboard-shortcut capture** in the binding editor, replacing the raw
-  virtual-key-code fields. Currently the single roughest edge in the UI.
-- **SF Symbol icons per `ActionType`** in the bindings list.
+- **Per-app profiles** — bindings that switch with the frontmost app. The
+  largest missing feature.
+- **Suppress the leading tap of a double tap** without making single taps feel
+  laggy. Currently a double tap fires `Tap` then `Double Tap`; solving that
+  properly needs a deferred-emission design in `GestureRecognizer`.
 - **Import/export config** from the preferences window via
   `NSOpenPanel`/`NSSavePanel`.
 - **Recognizer edge-case tests** — diagonal swipes, a finger lifting mid-swipe,
