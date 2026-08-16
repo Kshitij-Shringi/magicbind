@@ -12,6 +12,10 @@ to the configuration format. Any such change ships with a migration path in
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-08-16
+
 ### Fixed — gestures never worked at all
 
 - **The touch reader leaked its devices and received nothing.**
@@ -341,5 +345,6 @@ as a foundation to build on, not a release to rely on.
 - Not sandboxed, by necessity — no Mac App Store distribution.
 
 
-[Unreleased]: https://github.com/Kshitij-Shringi/magicbind/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Kshitij-Shringi/magicbind/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Kshitij-Shringi/magicbind/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kshitij-Shringi/magicbind/releases/tag/v0.1.0
