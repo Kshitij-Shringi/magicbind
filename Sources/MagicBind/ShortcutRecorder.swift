@@ -3,14 +3,21 @@ import Carbon.HIToolbox
 import MagicBindCore
 import SwiftUI
 
-/// A shortcut recorder backed by a real first-responder `NSView`.
+/// A "click to record" keyboard shortcut field.
 ///
-/// The first version used `NSEvent.addLocalMonitorForEvents`, which does not
-/// reliably see **key equivalents** — ⌘W, ⌘Q, ⌘, and anything else claimed by
-/// the main menu get consumed before a monitor sees them, so those shortcuts
-/// silently failed to record. An `NSView` that becomes first responder and
-/// overrides `performKeyEquivalent(with:)` sees them first, which is how every
-/// working macOS shortcut recorder does it.
+/// Capture goes through `KeyCaptureTap` — a CGEvent tap that is armed only
+/// while recording. Two earlier approaches each failed on a different class of
+/// shortcut:
+///
+/// - `NSEvent.addLocalMonitorForEvents` never saw menu key equivalents (⌘W, ⌘Q).
+/// - A first-responder `NSView` overriding `performKeyEquivalent(with:)` fixed
+///   those but still missed system-reserved combinations such as the screenshot
+///   shortcuts, and depended on the view actually being first responder.
+///
+/// The tap sits above both and is independent of focus. The responder-chain
+/// path is kept as a fallback for when the tap can't be created — that only
+/// happens without Accessibility permission, in which case the field still
+/// records ordinary shortcuts.
 struct ShortcutRecorder: NSViewRepresentable {
     @Binding var keyCode: UInt16?
     @Binding var modifiers: UInt64?
@@ -45,11 +52,16 @@ struct ShortcutRecorder: NSViewRepresentable {
             ?? "Click to record shortcut"
     }
 
-    /// The AppKit view that does the actual capturing.
+    /// The AppKit view that draws the field and owns the capture tap.
     final class RecorderView: NSView {
         var onCapture: ((UInt16, UInt64?) -> Void)?
         var onClear: (() -> Void)?
         var onRecordingChanged: ((Bool) -> Void)?
+
+        private var capture: KeyCaptureTap?
+        /// True when the tap couldn't be created and we're relying on the
+        /// responder chain, which can't see reserved shortcuts.
+        private var isUsingFallback = false
 
         private(set) var isRecording = false {
             didSet {
@@ -75,7 +87,6 @@ struct ShortcutRecorder: NSViewRepresentable {
             let field = NSTextField(labelWithString: "")
             field.alignment = .center
             field.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
-            field.textColor = .white
             field.lineBreakMode = .byTruncatingTail
             return field
         }()
@@ -100,12 +111,14 @@ struct ShortcutRecorder: NSViewRepresentable {
             fatalError("init(coder:) has not been implemented")
         }
 
+        deinit {
+            capture?.stop()
+        }
+
         override var intrinsicContentSize: NSSize {
             NSSize(width: NSView.noIntrinsicMetric, height: 32)
         }
 
-        // Being in the key view loop is what lets the view take first responder
-        // status, and therefore receive key events at all.
         override var acceptsFirstResponder: Bool { true }
         override var canBecomeKeyView: Bool { true }
 
@@ -117,23 +130,48 @@ struct ShortcutRecorder: NSViewRepresentable {
             }
         }
 
-        override func becomeFirstResponder() -> Bool {
-            let accepted = super.becomeFirstResponder()
-            updateAppearance()
-            return accepted
-        }
-
         override func resignFirstResponder() -> Bool {
-            // Clicking elsewhere should disarm, not leave the field silently
-            // eating keystrokes.
+            // Clicking elsewhere disarms, rather than leaving a tap installed
+            // and the keyboard swallowed.
             stopRecording()
             return super.resignFirstResponder()
         }
 
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { stopRecording() }
+        }
+
+        // MARK: - Recording
+
         private func startRecording() {
+            guard !isRecording else { return }
             window?.makeFirstResponder(self)
             liveModifiers = []
             isRecording = true
+
+            let tap = KeyCaptureTap(
+                onModifiers: { [weak self] modifiers in
+                    // Tap callbacks arrive on the main run loop, but hop anyway
+                    // so UI mutation is unambiguously on the main thread.
+                    DispatchQueue.main.async { self?.liveModifiers = modifiers }
+                },
+                onKey: { [weak self] keyCode, modifiers in
+                    DispatchQueue.main.async { self?.handleCapturedKey(keyCode, modifiers) }
+                }
+            )
+
+            do {
+                try tap.start()
+                capture = tap
+                isUsingFallback = false
+            } catch {
+                // No Accessibility permission. Ordinary shortcuts still record
+                // through the responder chain; reserved ones won't.
+                capture = nil
+                isUsingFallback = true
+            }
+
             updateLabelForRecording()
             updateAppearance()
         }
@@ -141,54 +179,55 @@ struct ShortcutRecorder: NSViewRepresentable {
         private func stopRecording() {
             guard isRecording else { return }
             isRecording = false
+            capture?.stop()
+            capture = nil
+            isUsingFallback = false
             liveModifiers = []
             label.stringValue = shortcutText
             updateAppearance()
         }
 
-        // MARK: - Key handling
+        private func handleCapturedKey(_ keyCode: UInt16, _ modifiers: ShortcutModifiers) {
+            guard isRecording else { return }
 
-        /// Key equivalents reach here before the menu bar can claim them, which
-        /// is the whole reason this view exists.
+            // Escape and Delete are control keys only when pressed bare; with a
+            // modifier held they're legitimate shortcuts (⌘⌫, ⌥⎋).
+            if modifiers.isEmpty, keyCode == UInt16(kVK_Escape) {
+                stopRecording()
+                return
+            }
+            if modifiers.isEmpty, keyCode == UInt16(kVK_Delete) {
+                onClear?()
+                stopRecording()
+                return
+            }
+
+            onCapture?(keyCode, modifiers.isEmpty ? nil : modifiers.rawValue)
+            stopRecording()
+        }
+
+        // MARK: - Responder-chain fallback
+
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
-            guard isRecording else { return false }
-            return capture(event)
+            guard isRecording, isUsingFallback else { return false }
+            handleCapturedKey(event.keyCode, Self.modifiers(from: event))
+            return true
         }
 
         override func keyDown(with event: NSEvent) {
-            guard isRecording, capture(event) else {
+            guard isRecording, isUsingFallback else {
                 super.keyDown(with: event)
                 return
             }
+            handleCapturedKey(event.keyCode, Self.modifiers(from: event))
         }
 
         override func flagsChanged(with event: NSEvent) {
-            guard isRecording else {
+            guard isRecording, isUsingFallback else {
                 super.flagsChanged(with: event)
                 return
             }
             liveModifiers = Self.modifiers(from: event)
-        }
-
-        /// - Returns: whether the event was consumed.
-        private func capture(_ event: NSEvent) -> Bool {
-            let flags = Self.modifiers(from: event)
-
-            // Escape and Delete are control keys only when pressed bare; with a
-            // modifier held they're legitimate shortcuts (⌘⌫, ⌥⎋).
-            if flags.isEmpty, event.keyCode == UInt16(kVK_Escape) {
-                stopRecording()
-                return true
-            }
-            if flags.isEmpty, event.keyCode == UInt16(kVK_Delete) {
-                onClear?()
-                stopRecording()
-                return true
-            }
-
-            onCapture?(event.keyCode, flags.isEmpty ? nil : flags.rawValue)
-            stopRecording()
-            return true
         }
 
         private static func modifiers(from event: NSEvent) -> ShortcutModifiers {
@@ -200,21 +239,52 @@ struct ShortcutRecorder: NSViewRepresentable {
 
         private func updateLabelForRecording() {
             guard isRecording else { return }
-            label.stringValue = liveModifiers.isEmpty
-                ? "Press a shortcut…"
-                : liveModifiers.glyphs + "…"
+            if liveModifiers.isEmpty {
+                label.stringValue = isUsingFallback
+                    ? "Press a shortcut… (no Accessibility: ⌘⇧4 etc. won't record)"
+                    : "Press a shortcut…"
+            } else {
+                label.stringValue = liveModifiers.glyphs + "…"
+            }
+        }
+
+        /// Layer colours are resolved in `updateLayer()`, never at configuration
+        /// time.
+        ///
+        /// `NSColor.controlBackgroundColor.cgColor` collapses a *dynamic* colour
+        /// into a fixed one using whatever appearance happens to be current when
+        /// the conversion runs — which, from `init` or a state-change method, is
+        /// not the view's appearance. That baked light-mode values in, so in dark
+        /// mode the field drew a white box with white text and the recorded
+        /// shortcut was invisible.
+        ///
+        /// Resolving inside `performAsCurrentDrawingAppearance` binds the
+        /// conversion to this view's effective appearance, and
+        /// `viewDidChangeEffectiveAppearance` re-runs it when the user switches
+        /// theme while the window is open.
+        override var wantsUpdateLayer: Bool { true }
+
+        override func updateLayer() {
+            super.updateLayer()
+            effectiveAppearance.performAsCurrentDrawingAppearance { [self] in
+                layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+                layer?.borderColor = isRecording
+                    ? NSColor.controlAccentColor.cgColor
+                    : NSColor.separatorColor.cgColor
+            }
+            layer?.borderWidth = isRecording ? 2 : 1
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            needsDisplay = true
         }
 
         private func updateAppearance() {
-            let accent = NSColor(
-                srgbRed: 0.36, green: 0.90, blue: 0.78, alpha: 1.0
-            )
-            layer?.backgroundColor = NSColor(white: 0.16, alpha: 1.0).cgColor
-            layer?.borderColor = isRecording
-                ? accent.cgColor
-                : NSColor(white: 1.0, alpha: 0.12).cgColor
-            layer?.borderWidth = isRecording ? 2 : 1
-            label.textColor = isRecording ? accent : .white
+            // NSTextField resolves a dynamic NSColor at draw time by itself, so
+            // the text colour is safe to set here; only CGColor conversion is not.
+            label.textColor = isRecording ? .controlAccentColor : .labelColor
+            needsDisplay = true
         }
     }
 }

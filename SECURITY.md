@@ -38,7 +38,9 @@ Nothing leaves your device. Concretely:
   API key, and no account. The app makes no network requests of its own.
 - **No touch or keystroke logging.** Touch frames are classified in memory and
   discarded. Nothing is written to disk, and MagicBind does not read the
-  contents of your keystrokes or the windows of other apps.
+  contents of your keystrokes or the windows of other apps. The one time a
+  keypress is read at all is while you are actively recording a shortcut, which
+  is described below.
 - **The only file written** is your configuration, at
   `~/Library/Application Support/MagicBind/config.json`. It is plain,
   hand-editable JSON containing your gesture bindings and recognizer
@@ -47,6 +49,10 @@ Nothing leaves your device. Concretely:
   MagicBind observes mouse button events — see
   [the next section](#risk-disclosure-mouse-button-watching) for exactly what
   that does and doesn't read. It is off by default.
+- **Recording a shortcut briefly taps the keyboard.** While a shortcut field is
+  armed, and only then, MagicBind installs an event tap to capture the key you
+  press — see
+  [Risk disclosure: shortcut recording](#risk-disclosure-shortcut-recording).
 
 If you configure a `shellCommand` or `appleScript` action, *that command* can
 of course do anything you tell it to, including reaching the network. That is
@@ -141,6 +147,47 @@ off. That's why it's a setting.
 
 For comparison: Logi Options+, BetterTouchTool, and Mac Mouse Fix all watch
 input this way, and most of them are closed source. This one you can read.
+
+## Risk disclosure: shortcut recording
+
+Recording a keyboard shortcut requires seeing the keypress, and the useful
+shortcuts are exactly the ones macOS intercepts first. ⌘W and ⌘Q are claimed by
+the menu bar; ⌘⇧4 and friends are claimed by the system above the application.
+Neither an `NSEvent` monitor nor a first-responder view can see those — both
+approaches were tried and both failed on real shortcuts.
+
+So while a shortcut field is armed, MagicBind installs a **keyboard event tap**,
+in [KeyCaptureTap.swift](Sources/MagicBindCore/KeyCaptureTap.swift).
+
+Be clear about how this differs from the mouse-button tap, because it is a
+stronger capability:
+
+- It is an **active** tap, not listen-only. It has to be: the keypress is
+  *swallowed* so that recording ⌘⇧4 records the shortcut instead of also taking
+  a screenshot. An active tap can suppress events.
+- It reads the **key code and modifier flags** of the key you press while
+  recording — that is the shortcut you are deliberately assigning.
+- Its mask covers key-down, key-up, and modifier changes. Nothing else.
+- Modifier changes are passed straight through; only the key-down and its
+  matching key-up are swallowed, so no other app sees a release for a press it
+  never received.
+
+What bounds it:
+
+- **It exists only while you are recording.** It is created when a shortcut
+  field is armed and destroyed the moment a key is captured, Escape is pressed,
+  the field loses focus, or the window closes. It is not running while you use
+  your Mac normally, and MagicBind installs no keyboard tap at any other time.
+- **Nothing is stored or logged.** The captured key code and modifiers go into
+  the binding you are editing. There is no buffer and no history.
+- **If the tap cannot be created** — no Accessibility permission — recording
+  falls back to the responder chain and the field says "limited". Ordinary
+  shortcuts still record; reserved ones can't be captured.
+
+If you would rather MagicBind never tap the keyboard, don't use the shortcut
+recorder: the named system actions (Mission Control, Screen Capture, Copy,
+Paste and the rest) are bindable without recording anything, and they cover most
+of what people want a shortcut for.
 
 ## Not sandboxed, and why
 
