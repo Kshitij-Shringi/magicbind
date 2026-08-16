@@ -39,6 +39,27 @@ struct TuningView: View {
             }
 
             Section {
+                Picker("Minimum fingers", selection: minimumFingersBinding) {
+                    ForEach(1...5, id: \.self) { Text("\($0)").tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                Text(
+                    """
+                    Touch gestures below this are ignored. One finger resting on \
+                    a mouse is just holding the mouse — setting this to 1 makes \
+                    ordinary mouse movement register as holds and swipes. Clicks \
+                    are unaffected.
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Sensitivity")
+            }
+
+            Section {
                 ThresholdSlider(
                     label: "Tap max duration",
                     value: $state.config.tuning.tapMaxDuration,
@@ -98,6 +119,13 @@ struct TuningView: View {
         Binding(
             get: { state.config.isMouseClicksEnabled },
             set: { state.setMouseClicksEnabled($0) }
+        )
+    }
+
+    private var minimumFingersBinding: Binding<Int> {
+        Binding(
+            get: { state.config.tuning.effectiveMinimumFingerCount },
+            set: { state.config.tuning.minimumFingerCount = $0 }
         )
     }
 

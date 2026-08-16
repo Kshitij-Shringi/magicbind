@@ -129,8 +129,12 @@ public final class GestureRecognizer {
         let elapsed = timestamp - current.startTimestamp
 
         if travel >= tuning.swipeMinMovement {
+            // The session is still marked emitted even when the gesture is
+            // dropped for having too few fingers — otherwise a one-finger drag
+            // would re-test on every subsequent frame.
             current.hasEmitted = true
             session = current
+            guard meetsMinimum(current.peakContactCount) else { return nil }
             return GestureSpec(
                 fingerCount: current.peakContactCount,
                 kind: Self.swipeKind(dx: dx, dy: dy)
@@ -140,6 +144,7 @@ public final class GestureRecognizer {
         if elapsed >= tuning.holdMinDuration && travel <= tuning.holdMaxMovement {
             current.hasEmitted = true
             session = current
+            guard meetsMinimum(current.peakContactCount) else { return nil }
             return GestureSpec(fingerCount: current.peakContactCount, kind: .hold)
         }
 
@@ -171,6 +176,10 @@ public final class GestureRecognizer {
         }
 
         let fingerCount = finished.peakContactCount
+        guard meetsMinimum(fingerCount) else {
+            lastTap = nil
+            return nil
+        }
         let liftTimestamp = finished.lastContactTimestamp
 
         // A second tap of the same finger count, soon enough after the first,
@@ -190,6 +199,16 @@ public final class GestureRecognizer {
 
         lastTap = (timestamp: liftTimestamp, fingerCount: fingerCount)
         return GestureSpec(fingerCount: fingerCount, kind: .tap)
+    }
+
+    /// Whether a touch gesture had enough fingers to count.
+    ///
+    /// One finger resting on a mouse is just holding the mouse — on real
+    /// hardware that produced a constant stream of one-finger holds and swipes
+    /// during ordinary use. Clicks are deliberately *not* gated here: a click is
+    /// an explicit act, never an accident of gripping the device.
+    private func meetsMinimum(_ fingerCount: Int) -> Bool {
+        fingerCount >= tuning.effectiveMinimumFingerCount
     }
 
     /// The centroid of every finger in contact.
