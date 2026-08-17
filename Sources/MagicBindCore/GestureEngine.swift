@@ -18,9 +18,20 @@ public final class GestureEngine {
     /// One recognizer per device.
     ///
     /// A Mac with both a Magic Mouse and a trackpad interleaves frames from
-    /// both. Sharing a recognizer would let one device's touches start a session
-    /// the other device's touches then finish, producing gestures nobody made.
+    /// both. Sharing a recognizer would let one device's touches start an
+    /// episode the other device's touches then finish, producing gestures nobody
+    /// made.
     private var recognizers: [UInt64: GestureRecognizer] = [:]
+
+    /// Guards `recognizers` and `lastContactDeviceID`.
+    ///
+    /// Touch frames arrive on the framework's own callback thread while button
+    /// events arrive on the main run loop, and both paths read and mutate this
+    /// state. Without a lock that is a data race on a Swift Dictionary, which
+    /// can corrupt recognizer state or crash outright — and it would present as
+    /// gestures working intermittently, which is exactly the sort of bug that
+    /// wastes hours.
+    private let lock = NSLock()
 
     /// Which device most recently reported contact, so a physical click can be
     /// attributed to a device.
@@ -77,8 +88,10 @@ public final class GestureEngine {
     public func start() throws {
         guard !isRunning else { return }
 
+        lock.lock()
         recognizers = [:]
         lastContactDeviceID = nil
+        lock.unlock()
 
         let reader = MultitouchReader { [weak self] device, fingers, timestamp in
             self?.handleFrame(device: device, fingers: fingers, timestamp: timestamp)
@@ -110,17 +123,21 @@ public final class GestureEngine {
         reader?.stopReading()
         reader = nil
         stopButtonMonitor()
+        lock.lock()
         recognizers = [:]
         lastContactDeviceID = nil
+        lock.unlock()
         isRunning = false
     }
 
     /// Picks up threshold changes made in the UI without a restart.
     public func reloadTuning() {
         let tuning = store.config.tuning
+        lock.lock()
         for recognizer in recognizers.values {
             recognizer.tuning = tuning
         }
+        lock.unlock()
     }
 
     /// Starts or stops the button tap to match `mouseClicksEnabled`, so the
@@ -151,20 +168,21 @@ public final class GestureEngine {
         // trackpad costs nothing and can't leave a half-finished session behind.
         guard store.config.isDeviceEnabled(device.kind) else { return }
 
+        lock.lock()
         if fingers.contains(where: \.isContact) {
             lastContactDeviceID = device.deviceID
         }
+        let gesture = recognizer(for: device).process(fingers: fingers, timestamp: timestamp)
+        lock.unlock()
 
-        let recognizer = recognizer(for: device)
-        guard let gesture = recognizer.process(fingers: fingers, timestamp: timestamp) else {
-            return
-        }
+        guard let gesture else { return }
 
         DispatchQueue.main.async { [weak self] in
             self?.dispatch(gesture, from: device)
         }
     }
 
+    /// - Important: callers must hold `lock`.
     private func recognizer(for device: MTDeviceInfo) -> GestureRecognizer {
         if let existing = recognizers[device.deviceID] {
             return existing
@@ -200,19 +218,23 @@ public final class GestureEngine {
     private func handleButton(_ button: MouseButton, isDown: Bool) {
         guard store.config.isEnabled else { return }
 
+        lock.lock()
         let device = clickDevice()
-        if let device, !store.config.isDeviceEnabled(device.kind) { return }
-
+        if let device, !store.config.isDeviceEnabled(device.kind) {
+            lock.unlock()
+            return
+        }
         let recognizer = device.map { self.recognizer(for: $0) } ?? fallbackRecognizer()
-        guard
-            let gesture = recognizer.processButton(button, isDown: isDown, timestamp: Self.now)
-        else { return }
+        let gesture = recognizer.processButton(button, isDown: isDown, timestamp: Self.now)
+        lock.unlock()
 
+        guard let gesture else { return }
         dispatch(gesture, from: device)
     }
 
     /// Best-effort attribution of a click to a device: whichever device last
     /// reported contact, else the first non-trackpad device.
+    /// - Important: callers must hold `lock`.
     private func clickDevice() -> MTDeviceInfo? {
         let all = devices
         if let lastContactDeviceID,
@@ -224,6 +246,7 @@ public final class GestureEngine {
 
     /// Used when no device is known — a click before any touch has been seen.
     /// Keyed on zero so it can't collide with a real device ID.
+    /// - Important: callers must hold `lock`.
     private func fallbackRecognizer() -> GestureRecognizer {
         if let existing = recognizers[0] { return existing }
         let created = GestureRecognizer(tuning: store.config.tuning)
