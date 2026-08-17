@@ -6,43 +6,81 @@ import Foundation
 /// on the private framework: it is driven entirely by
 /// `process(fingers:timestamp:)`, with the caller supplying the frame
 /// timestamp. That makes the whole classification path unit-testable with
-/// synthetic `MTFinger` arrays, which is exactly what
-/// `GestureRecognizerTests` does.
+/// synthetic `MTFinger` arrays.
 ///
-/// A "session" is one continuous period of contact — from the first finger
-/// touching down to the last finger lifting. At most one gesture is emitted
-/// per session.
+/// ## Episodes, not sessions
+///
+/// The unit of recognition is an **episode**: a stretch of frames with a
+/// constant number of fingers in contact. An episode begins whenever the contact
+/// count changes and ends when it changes again.
+///
+/// This matters because of how a mouse is actually held. An earlier version
+/// treated one continuous period of contact as the unit, and only evaluated a
+/// tap once *every* finger left the surface. On a Magic Mouse a finger never
+/// leaves the surface — you are holding the thing — so that period was minutes
+/// long, its duration always exceeded `tapMaxDuration`, and taps simply never
+/// fired. It appeared to work only when the hand was lifted clear between
+/// attempts, which is what testing looks like and not what use looks like.
+///
+/// Episodes fix that: resting one finger and tapping a second is a 1-contact
+/// episode, then a 2-contact episode lasting 50ms, then a 1-contact episode
+/// again. The middle one is the tap.
+///
+/// An episode that ends because the count went **up** is discarded rather than
+/// classified — fingers rarely land together, so a three-finger tap arrives as
+/// 1, then 2, then 3 contacts, and those first two steps are a hand settling
+/// rather than gestures. Only a count going **down** completes a gesture.
 public final class GestureRecognizer {
     /// Threshold constants. Mutable so the preferences UI can retune the
     /// recognizer live without rebuilding it.
     public var tuning: RecognizerTuning
 
-    private struct Session {
+    /// A stretch of frames with a constant contact count.
+    private struct Episode {
+        /// When this contact count was first seen.
         var startTimestamp: Double
+        /// The most recent frame still showing this count.
+        var lastTimestamp: Double
         var baselineCentroid: MTPoint
-        var lastContactTimestamp: Double
         var lastCentroid: MTPoint
         var contactCount: Int
-        var peakContactCount: Int
+        /// Whether this episode began by fingers being *added*.
+        ///
+        /// Releasing three fingers one at a time passes through 2 and 1 contacts
+        /// on the way down, and those are the tail of one gesture rather than
+        /// gestures of their own. Without this, lifting a three-finger tap also
+        /// emitted a two-finger tap.
+        var enteredByIncrease: Bool
+        /// Set once this episode has produced a gesture, so a swipe or hold
+        /// can't fire twice and can't be followed by a tap.
         var hasEmitted: Bool
     }
 
-    private var session: Session?
+    private var episode: Episode?
 
     /// When and with how many fingers the last tap landed, so the next tap can
     /// be promoted to a double tap.
     private var lastTap: (timestamp: Double, fingerCount: Int)?
 
+    /// When a physical button was last pressed.
+    ///
+    /// A click is not a tap, so an episode containing a click is disqualified.
+    /// This is a timestamp rather than a flag on the contact period: an earlier
+    /// version marked the whole period as spent, which, with a hand resting on
+    /// the mouse and therefore a period lasting minutes, killed every tap after
+    /// the first click until the hand was lifted clear.
+    private var lastClickTimestamp: Double?
+
     public init(tuning: RecognizerTuning = .default) {
         self.tuning = tuning
     }
 
-    /// Discards any in-progress session. Call this when the engine is
-    /// disabled or the device disconnects, so a stale session can't emit a
-    /// gesture on the next frame.
+    /// Discards any in-progress episode. Call this when the engine is disabled
+    /// or the device disconnects, so stale state can't emit on the next frame.
     public func reset() {
-        session = nil
+        episode = nil
         lastTap = nil
+        lastClickTimestamp = nil
     }
 
     /// Classifies a physical button press as a click gesture, using however
@@ -51,8 +89,6 @@ public final class GestureRecognizer {
     /// Called by `GestureEngine` from `MouseButtonMonitor`, separately from the
     /// touch frame stream, because button events and touch frames arrive on
     /// different callbacks. Only presses produce gestures; releases are ignored.
-    ///
-    /// - Returns: the click gesture, or `nil` for a button release.
     public func processButton(
         _ button: MouseButton,
         isDown: Bool,
@@ -60,14 +96,8 @@ public final class GestureRecognizer {
     ) -> GestureSpec? {
         guard isDown else { return nil }
 
-        // A click with fingers resting on the surface is a different gesture
-        // from a bare click, so the current contact count is part of the spec.
-        let fingers = session?.contactCount ?? 0
-
-        // A click ends any tap/hold in progress — the user clicked rather than
-        // tapped — and clears the double-tap history so a click between two taps
-        // doesn't join them.
-        session?.hasEmitted = true
+        let fingers = episode?.contactCount ?? 0
+        lastClickTimestamp = timestamp
         lastTap = nil
 
         return GestureSpec(fingerCount: fingers, kind: .click, button: button)
@@ -81,92 +111,93 @@ public final class GestureRecognizer {
     ///     (hovering, lifting) are ignored.
     ///   - timestamp: the frame's timestamp, in seconds. Only differences
     ///     matter, so any monotonic clock works.
-    /// - Returns: the recognized gesture, or `nil` if this frame did not
-    ///   complete one.
     public func process(fingers: [MTFinger], timestamp: Double) -> GestureSpec? {
         let contacts = fingers.filter(\.isContact)
-
-        guard !contacts.isEmpty else {
-            return endSession()
-        }
-
         let centroid = Self.centroid(of: contacts)
 
-        guard var current = session else {
-            session = Session(
-                startTimestamp: timestamp,
-                baselineCentroid: centroid,
-                lastContactTimestamp: timestamp,
-                lastCentroid: centroid,
-                contactCount: contacts.count,
-                peakContactCount: contacts.count,
-                hasEmitted: false
-            )
+        guard var current = episode else {
+            if !contacts.isEmpty {
+                episode = Episode(
+                    startTimestamp: timestamp,
+                    lastTimestamp: timestamp,
+                    baselineCentroid: centroid,
+                    lastCentroid: centroid,
+                    contactCount: contacts.count,
+                    enteredByIncrease: true,
+                    hasEmitted: false
+                )
+            }
             return nil
         }
 
-        // Fingers rarely land simultaneously: a three-finger gesture usually
-        // arrives as a 1-, then 2-, then 3-contact frame. Each of those steps
-        // moves the centroid for reasons that have nothing to do with the
-        // user moving their hand, so re-baseline on any count change. The
-        // session's start time is preserved, so tap/hold timing still measures
-        // from first contact.
+        // A change in contact count ends the current episode.
         if contacts.count != current.contactCount {
-            current.contactCount = contacts.count
-            current.peakContactCount = max(current.peakContactCount, contacts.count)
-            current.baselineCentroid = centroid
+            let finished = current
+            let wentDown = contacts.count < current.contactCount
+
+            episode = contacts.isEmpty
+                ? nil
+                : Episode(
+                    startTimestamp: timestamp,
+                    lastTimestamp: timestamp,
+                    baselineCentroid: centroid,
+                    lastCentroid: centroid,
+                    contactCount: contacts.count,
+                    enteredByIncrease: !wentDown,
+                    hasEmitted: false
+                )
+
+            // Only a count going down completes a gesture. Going up is a hand
+            // still settling onto the device.
+            return wentDown ? classifyTap(finished, endedAt: timestamp) : nil
         }
 
         current.lastCentroid = centroid
-        current.lastContactTimestamp = timestamp
-        session = current
+        current.lastTimestamp = timestamp
+        episode = current
 
         guard !current.hasEmitted else { return nil }
 
-        let dx = Double(centroid.x - current.baselineCentroid.x)
-        let dy = Double(centroid.y - current.baselineCentroid.y)
-        let travel = (dx * dx + dy * dy).squareRoot()
+        let travel = Self.distance(from: current.baselineCentroid, to: centroid)
         let elapsed = timestamp - current.startTimestamp
 
         if travel >= tuning.swipeMinMovement {
-            // The session is still marked emitted even when the gesture is
-            // dropped for having too few fingers — otherwise a one-finger drag
-            // would re-test on every subsequent frame.
+            // Marked spent even when dropped for having too few fingers, so a
+            // one-finger drag isn't re-tested on every subsequent frame.
             current.hasEmitted = true
-            session = current
-            guard meetsMinimum(current.peakContactCount) else { return nil }
+            episode = current
+            guard meetsMinimum(current.contactCount) else { return nil }
+            let dx = Double(centroid.x - current.baselineCentroid.x)
+            let dy = Double(centroid.y - current.baselineCentroid.y)
             return GestureSpec(
-                fingerCount: current.peakContactCount,
+                fingerCount: current.contactCount,
                 kind: Self.swipeKind(dx: dx, dy: dy)
             )
         }
 
         if elapsed >= tuning.holdMinDuration && travel <= tuning.holdMaxMovement {
             current.hasEmitted = true
-            session = current
-            guard meetsMinimum(current.peakContactCount) else { return nil }
-            return GestureSpec(fingerCount: current.peakContactCount, kind: .hold)
+            episode = current
+            guard meetsMinimum(current.contactCount) else { return nil }
+            return GestureSpec(fingerCount: current.contactCount, kind: .hold)
         }
 
         return nil
     }
 
-    /// Handles the frame where the last finger lifted, classifying a tap if
-    /// the session was short and stationary enough.
-    private func endSession() -> GestureSpec? {
-        guard let finished = session else { return nil }
-        session = nil
-
+    /// Decides whether a finished episode was a tap, and whether it pairs with
+    /// the previous one into a double tap.
+    private func classifyTap(_ finished: Episode, endedAt end: Double) -> GestureSpec? {
         guard !finished.hasEmitted else { return nil }
 
-        let dx = Double(finished.lastCentroid.x - finished.baselineCentroid.x)
-        let dy = Double(finished.lastCentroid.y - finished.baselineCentroid.y)
-        let travel = (dx * dx + dy * dy).squareRoot()
+        // Only the peak of a contact ramp is a gesture. The counts passed
+        // through while lifting are the tail of that same gesture. `lastTap` is
+        // deliberately left alone here, so a pending double tap survives the
+        // fingers coming off.
+        guard finished.enteredByIncrease else { return nil }
 
-        // Measured to the last frame that still had contact, not to the frame
-        // that reported the lift — the gap between those two is reader
-        // latency, not part of the user's gesture.
-        let duration = finished.lastContactTimestamp - finished.startTimestamp
+        let travel = Self.distance(from: finished.baselineCentroid, to: finished.lastCentroid)
+        let duration = finished.lastTimestamp - finished.startTimestamp
 
         guard duration <= tuning.tapMaxDuration, travel <= tuning.tapMaxMovement else {
             // An abandoned gesture shouldn't leave a half-finished double tap
@@ -175,21 +206,31 @@ public final class GestureRecognizer {
             return nil
         }
 
-        let fingerCount = finished.peakContactCount
+        let fingerCount = finished.contactCount
         guard meetsMinimum(fingerCount) else {
             lastTap = nil
             return nil
         }
-        let liftTimestamp = finished.lastContactTimestamp
 
-        // A second tap of the same finger count, soon enough after the first,
-        // is a double tap.
+        // A click is not a tap — but only the episode the click actually
+        // happened during is disqualified. Suppressing on a time window instead
+        // would randomly eat taps all day, because clicking is constant.
+        if let lastClickTimestamp,
+           lastClickTimestamp >= finished.startTimestamp,
+           lastClickTimestamp <= end {
+            lastTap = nil
+            return nil
+        }
+
+        let liftTimestamp = finished.lastTimestamp
+
+        // A second tap of the same finger count, soon enough after the first, is
+        // a double tap.
         //
-        // Note this emits `.tap` for the first tap and `.doubleTap` for the
-        // second — it does not retroactively suppress the first. Suppressing it
-        // would mean delaying every tap by the double-tap window, which makes
-        // single taps feel laggy. Bind one or the other, not both, unless you
-        // want both to fire.
+        // Note this emits `.tap` for the first and `.doubleTap` for the second;
+        // it does not retroactively suppress the first. Suppressing it would
+        // mean delaying every tap by the double-tap window, which makes single
+        // taps feel laggy. Bind one or the other, not both, unless you want both.
         if let previous = lastTap,
            previous.fingerCount == fingerCount,
            liftTimestamp - previous.timestamp <= tuning.effectiveDoubleTapMaxInterval {
@@ -222,6 +263,12 @@ public final class GestureRecognizer {
         }
         let count = Float(contacts.count)
         return MTPoint(x: sumX / count, y: sumY / count)
+    }
+
+    static func distance(from: MTPoint, to: MTPoint) -> Double {
+        let dx = Double(to.x - from.x)
+        let dy = Double(to.y - from.y)
+        return (dx * dx + dy * dy).squareRoot()
     }
 
     /// Picks a swipe direction from a displacement, using whichever axis
